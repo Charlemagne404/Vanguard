@@ -1,4 +1,5 @@
 import asyncio
+from collections import defaultdict, deque
 import json
 import os
 import random
@@ -27,10 +28,16 @@ except ValueError:
 
 SETTINGS_FILE = "settings.json"
 REMINDERS_FILE = "reminders.json"
+MOD_LOG_FILE = "modlog.json"
 START_TIME = datetime.now(timezone.utc)
 REMINDER_CHECK_SECONDS = 15
 MAX_REMINDER_SECONDS = 60 * 60 * 24 * 30
 MAX_TIMEOUT_SECONDS = 60 * 60 * 24 * 28
+MAX_CASES_PER_GUILD = 1000
+GUARD_COOLDOWN_SECONDS = 300
+
+PRIVACY_URL = os.getenv("PRIVACY_POLICY_URL", "").strip()
+TOS_URL = os.getenv("TERMS_OF_SERVICE_URL", "").strip()
 
 ID_RE = re.compile(r"(\d{17,20})")
 DURATION_TOKEN_RE = re.compile(r"(\d+)([smhdw])")
@@ -42,10 +49,17 @@ def default_guild_settings() -> dict[str, Any]:
         "welcome_channel_id": None,
         "welcome_role_id": None,
         "welcome_message": None,
+        "ops_channel_id": None,
+        "log_channel_id": None,
         "lockdown_role_id": None,
         "mod_role_ids": [],
         "mc_host": None,
         "mc_port": 25565,
+        "guard_enabled": False,
+        "guard_window_seconds": 30,
+        "guard_threshold": 8,
+        "guard_new_account_hours": 24,
+        "guard_slowmode_seconds": 30,
     }
 
 
@@ -99,6 +113,8 @@ def normalize_settings(raw: Any) -> dict[str, Any]:
 
         guild_cfg["welcome_channel_id"] = as_int(cfg.get("welcome_channel_id"))
         guild_cfg["welcome_role_id"] = as_int(cfg.get("welcome_role_id"))
+        guild_cfg["ops_channel_id"] = as_int(cfg.get("ops_channel_id"))
+        guild_cfg["log_channel_id"] = as_int(cfg.get("log_channel_id"))
         guild_cfg["lockdown_role_id"] = as_int(cfg.get("lockdown_role_id"))
 
         welcome_message = cfg.get("welcome_message")
@@ -117,6 +133,29 @@ def normalize_settings(raw: Any) -> dict[str, Any]:
 
         port = as_int(cfg.get("mc_port"))
         guild_cfg["mc_port"] = port if port and 1 <= port <= 65535 else 25565
+
+        guard_enabled = cfg.get("guard_enabled")
+        guild_cfg["guard_enabled"] = bool(guard_enabled)
+
+        guard_window_seconds = as_int(cfg.get("guard_window_seconds"))
+        guild_cfg["guard_window_seconds"] = (
+            guard_window_seconds if guard_window_seconds and 5 <= guard_window_seconds <= 300 else 30
+        )
+
+        guard_threshold = as_int(cfg.get("guard_threshold"))
+        guild_cfg["guard_threshold"] = (
+            guard_threshold if guard_threshold and 3 <= guard_threshold <= 100 else 8
+        )
+
+        guard_new_account_hours = as_int(cfg.get("guard_new_account_hours"))
+        guild_cfg["guard_new_account_hours"] = (
+            guard_new_account_hours if guard_new_account_hours and 1 <= guard_new_account_hours <= 168 else 24
+        )
+
+        guard_slowmode_seconds = as_int(cfg.get("guard_slowmode_seconds"))
+        guild_cfg["guard_slowmode_seconds"] = (
+            guard_slowmode_seconds if guard_slowmode_seconds and 0 <= guard_slowmode_seconds <= 21600 else 30
+        )
 
         guilds[str(guild_id)] = guild_cfg
 
@@ -213,10 +252,109 @@ reminders = load_reminders()
 next_reminder_id = max((reminder["id"] for reminder in reminders), default=0) + 1
 
 
+def normalize_modlog(raw: Any) -> dict[str, list[dict[str, Any]]]:
+    if not isinstance(raw, dict):
+        return {}
+    normalized: dict[str, list[dict[str, Any]]] = {}
+    for guild_id, entries in raw.items():
+        if not isinstance(entries, list):
+            continue
+        clean_entries: list[dict[str, Any]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            case_id = as_int(entry.get("case_id"))
+            action = entry.get("action")
+            actor_id = as_int(entry.get("actor_id"))
+            target_id = as_int(entry.get("target_id"))
+            created_at = parse_datetime_utc(entry.get("created_at"))
+            if (
+                case_id is None
+                or actor_id is None
+                or not isinstance(action, str)
+                or created_at is None
+            ):
+                continue
+            clean_entries.append(
+                {
+                    "case_id": case_id,
+                    "action": action[:64],
+                    "actor_id": actor_id,
+                    "target_id": target_id,
+                    "reason": str(entry.get("reason") or "")[:300],
+                    "details": str(entry.get("details") or "")[:500],
+                    "created_at": created_at.isoformat(),
+                    "undoable": bool(entry.get("undoable", False)),
+                    "undone": bool(entry.get("undone", False)),
+                }
+            )
+        clean_entries.sort(key=lambda item: item["case_id"])
+        normalized[str(guild_id)] = clean_entries[-MAX_CASES_PER_GUILD:]
+    return normalized
+
+
+def load_modlog() -> dict[str, list[dict[str, Any]]]:
+    if not os.path.exists(MOD_LOG_FILE):
+        with open(MOD_LOG_FILE, "w") as file:
+            json.dump({}, file, indent=2)
+        return {}
+    try:
+        with open(MOD_LOG_FILE, "r") as file:
+            return normalize_modlog(json.load(file))
+    except (json.JSONDecodeError, OSError):
+        with open(MOD_LOG_FILE, "w") as file:
+            json.dump({}, file, indent=2)
+        return {}
+
+
+modlog = load_modlog()
+message_rate_tracker: dict[int, deque[datetime]] = defaultdict(deque)
+guard_last_trigger: dict[int, datetime] = {}
+
+
 def save_reminders() -> None:
     reminders.sort(key=lambda reminder: reminder["due_at"])
     with open(REMINDERS_FILE, "w") as file:
         json.dump(reminders, file, indent=2)
+
+
+def save_modlog() -> None:
+    with open(MOD_LOG_FILE, "w") as file:
+        json.dump(modlog, file, indent=2)
+
+
+def get_next_case_id(guild_id: int) -> int:
+    entries = modlog.get(str(guild_id), [])
+    return max((entry.get("case_id", 0) for entry in entries), default=0) + 1
+
+
+def log_moderation_action(
+    guild_id: int,
+    action: str,
+    actor_id: int,
+    target_id: int | None = None,
+    reason: str | None = None,
+    details: str | None = None,
+    undoable: bool = False,
+) -> int:
+    case_id = get_next_case_id(guild_id)
+    entries = modlog.setdefault(str(guild_id), [])
+    entries.append(
+        {
+            "case_id": case_id,
+            "action": action[:64],
+            "actor_id": actor_id,
+            "target_id": target_id,
+            "reason": (reason or "")[:300],
+            "details": (details or "")[:500],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "undoable": undoable,
+            "undone": False,
+        }
+    )
+    modlog[str(guild_id)] = entries[-MAX_CASES_PER_GUILD:]
+    save_modlog()
+    return case_id
 
 
 def create_reminder_id() -> int:
@@ -374,6 +512,34 @@ def resolve_welcome_channel(
     return None
 
 
+async def send_ops_log(guild: discord.Guild, message: str) -> None:
+    guild_cfg = get_guild_config(guild.id)
+    channel_id = guild_cfg.get("log_channel_id")
+    if not channel_id:
+        return
+    channel = guild.get_channel(channel_id)
+    if channel and hasattr(channel, "send"):
+        try:
+            await channel.send(message)
+        except Exception:
+            pass
+
+
+def count_guard_window(guild_id: int, window_seconds: int, now: datetime) -> int:
+    tracker = message_rate_tracker[guild_id]
+    cutoff = now - timedelta(seconds=window_seconds)
+    while tracker and tracker[0] < cutoff:
+        tracker.popleft()
+    return len(tracker)
+
+
+def should_trigger_guard(guild_id: int, now: datetime) -> bool:
+    last = guard_last_trigger.get(guild_id)
+    if not last:
+        return True
+    return (now - last).total_seconds() >= GUARD_COOLDOWN_SECONDS
+
+
 def get_active_prefix(guild: discord.Guild | None) -> str:
     if guild is None:
         return BOT_PREFIX
@@ -496,6 +662,19 @@ async def set_lockdown_state(ctx: commands.Context, locked: bool) -> None:
     embed.add_field(name="Channels failed", value=str(failed), inline=True)
     embed.set_footer(text=f"Triggered by {ctx.author.display_name}")
     await ctx.send(embed=embed)
+    case_id = log_moderation_action(
+        guild_id=guild.id,
+        action="lockdown" if locked else "unlock",
+        actor_id=ctx.author.id,
+        reason=f"Changed communication state for role {target_role.name}",
+        details=f"updated={updated},failed={failed},role_id={target_role.id}",
+        undoable=False,
+    )
+    await send_ops_log(
+        guild,
+        f"📘 Case `{case_id}` {ctx.author.mention} ran `{ 'lockdown' if locked else 'unlock' }` "
+        f"for role `{target_role.name}`.",
+    )
 
 
 async def dispatch_due_reminders() -> None:
@@ -633,6 +812,71 @@ async def on_member_join(member: discord.Member):
 
 
 @bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    if isinstance(message.author, discord.Member) and message.guild:
+        guild = message.guild
+        guild_cfg = get_guild_config(guild.id)
+        if guild_cfg.get("guard_enabled", False):
+            now = datetime.now(timezone.utc)
+            new_account_hours = guild_cfg.get("guard_new_account_hours", 24)
+            account_age = now - message.author.created_at.astimezone(timezone.utc)
+            if account_age <= timedelta(hours=new_account_hours):
+                message_rate_tracker[guild.id].append(now)
+                window_seconds = guild_cfg.get("guard_window_seconds", 30)
+                threshold = guild_cfg.get("guard_threshold", 8)
+                current_rate = count_guard_window(guild.id, window_seconds, now)
+                if current_rate >= threshold and should_trigger_guard(guild.id, now):
+                    guard_last_trigger[guild.id] = now
+                    details = (
+                        f"Detected {current_rate} messages from new accounts in "
+                        f"{window_seconds}s window."
+                    )
+                    alert_channel = message.channel
+                    configured_alert = guild.get_channel(guild_cfg.get("ops_channel_id"))
+                    if configured_alert and hasattr(configured_alert, "send"):
+                        alert_channel = configured_alert
+
+                    slowmode_seconds = guild_cfg.get("guard_slowmode_seconds", 30)
+                    if (
+                        isinstance(message.channel, discord.TextChannel)
+                        and slowmode_seconds >= 0
+                    ):
+                        try:
+                            await message.channel.edit(slowmode_delay=slowmode_seconds)
+                        except Exception:
+                            pass
+
+                    alert_text = (
+                        "🚨 **Guard Triggered**\n"
+                        f"{details}\n"
+                        f"Applied slowmode: `{slowmode_seconds}s` in {message.channel.mention}."
+                    )
+                    try:
+                        if hasattr(alert_channel, "send"):
+                            await alert_channel.send(alert_text)
+                    except Exception:
+                        pass
+
+                    case_id = log_moderation_action(
+                        guild_id=guild.id,
+                        action="guard_trigger",
+                        actor_id=bot.user.id if bot.user else 0,
+                        reason="Automated guard defense",
+                        details=details,
+                        undoable=False,
+                    )
+                    await send_ops_log(
+                        guild,
+                        f"🛡️ Case `{case_id}` guard trigger in {message.channel.mention}: {details}",
+                    )
+
+    await bot.process_commands(message)
+
+
+@bot.event
 async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if hasattr(ctx.command, "on_error"):
         return
@@ -703,7 +947,10 @@ async def help_command(ctx: commands.Context, *, command_name: str | None = None
     )
     embed.add_field(
         name="General",
-        value="`help` `ping` `uptime` `botstats` `serverinfo` `userinfo` `avatar` `voteinfo` `activevotes`",
+        value=(
+            "`help` `ping` `uptime` `botstats` `serverinfo` `userinfo` `avatar` "
+            "`voteinfo` `activevotes` `ops` `health`"
+        ),
         inline=False,
     )
     embed.add_field(
@@ -713,15 +960,24 @@ async def help_command(ctx: commands.Context, *, command_name: str | None = None
     )
     embed.add_field(
         name="Moderation",
-        value="`lockdown` `unlock` `purge` `slowmode` `nick` `timeout` `untimeout`",
+        value=(
+            "`lockdown` `unlock` `purge` `slowmode` `nick` `timeout` `untimeout` "
+            "`guard` `warn` `cases` `undo`"
+        ),
         inline=False,
     )
     embed.add_field(
         name="Configuration",
         value=(
             "`showconfig` `prefix` `setwelcomechannel` `setwelcomerole` "
-            "`setwelcomemessage` `setlockdownrole` `setmodroles` `setmcserver` `clearmcserver`"
+            "`setwelcomemessage` `setlockdownrole` `setmodroles` `setmcserver` `clearmcserver` "
+            "`setup` `setlogchannel` `setopschannel`"
         ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Legal",
+        value="`privacy` `tos` `data`",
         inline=False,
     )
     embed.add_field(
@@ -731,6 +987,215 @@ async def help_command(ctx: commands.Context, *, command_name: str | None = None
     )
     await ctx.send(embed=embed)
 
+
+@bot.hybrid_command(name="setup")
+async def setup_command(
+    ctx: commands.Context,
+    mod_role: discord.Role | None = None,
+    welcome_channel: discord.TextChannel | None = None,
+    welcome_role: discord.Role | None = None,
+    log_channel: discord.TextChannel | None = None,
+    ops_channel: discord.TextChannel | None = None,
+):
+    """Quick server setup for Vanguard baseline configuration."""
+    result = await require_mod_context(ctx)
+    if not result:
+        return
+    guild, guild_cfg = result
+
+    if mod_role:
+        guild_cfg["mod_role_ids"] = sorted({mod_role.id})
+    if welcome_channel:
+        guild_cfg["welcome_channel_id"] = welcome_channel.id
+    if welcome_role:
+        guild_cfg["welcome_role_id"] = welcome_role.id
+    if log_channel:
+        guild_cfg["log_channel_id"] = log_channel.id
+    if ops_channel:
+        guild_cfg["ops_channel_id"] = ops_channel.id
+    if guild_cfg.get("lockdown_role_id") is None:
+        guild_cfg["lockdown_role_id"] = guild.default_role.id
+
+    save_settings()
+    mod_roles_text = ", ".join(f"<@&{rid}>" for rid in guild_cfg.get("mod_role_ids", [])) or "not set"
+    welcome_channel_id = guild_cfg.get("welcome_channel_id")
+    log_channel_id = guild_cfg.get("log_channel_id")
+    ops_channel_id = guild_cfg.get("ops_channel_id")
+    await ctx.send(
+        "✅ Setup complete.\n"
+        f"- Prefix: `{get_active_prefix(guild)}`\n"
+        f"- Mod roles: {mod_roles_text}\n"
+        f"- Welcome channel: {f'<#{welcome_channel_id}>' if welcome_channel_id else 'fallback mode'}\n"
+        f"- Log channel: {f'<#{log_channel_id}>' if log_channel_id else 'not set'}\n"
+        f"- Ops channel: {f'<#{ops_channel_id}>' if ops_channel_id else 'not set'}"
+    )
+
+
+@bot.hybrid_command(name="setlogchannel")
+async def setlogchannel(ctx: commands.Context, channel: discord.TextChannel | None = None):
+    """Set moderation log channel. Omit to clear."""
+    result = await require_mod_context(ctx)
+    if not result:
+        return
+    _, guild_cfg = result
+    guild_cfg["log_channel_id"] = channel.id if channel else None
+    save_settings()
+    await ctx.send(
+        f"✅ Log channel set to {channel.mention}." if channel else "✅ Log channel cleared."
+    )
+
+
+@bot.hybrid_command(name="setopschannel")
+async def setopschannel(ctx: commands.Context, channel: discord.TextChannel | None = None):
+    """Set ops/alerts channel. Omit to clear."""
+    result = await require_mod_context(ctx)
+    if not result:
+        return
+    _, guild_cfg = result
+    guild_cfg["ops_channel_id"] = channel.id if channel else None
+    save_settings()
+    await ctx.send(
+        f"✅ Ops channel set to {channel.mention}." if channel else "✅ Ops channel cleared."
+    )
+
+
+@bot.hybrid_command(name="guard")
+async def guard(
+    ctx: commands.Context,
+    enabled: bool | None = None,
+    threshold: int | None = None,
+    window_seconds: int | None = None,
+    slowmode_seconds: int | None = None,
+    new_account_hours: int | None = None,
+):
+    """Configure anti-raid guard thresholds."""
+    result = await require_mod_context(ctx)
+    if not result:
+        return
+    guild, guild_cfg = result
+
+    if enabled is not None:
+        guild_cfg["guard_enabled"] = enabled
+    if threshold is not None:
+        guild_cfg["guard_threshold"] = max(3, min(100, threshold))
+    if window_seconds is not None:
+        guild_cfg["guard_window_seconds"] = max(5, min(300, window_seconds))
+    if slowmode_seconds is not None:
+        guild_cfg["guard_slowmode_seconds"] = max(0, min(21600, slowmode_seconds))
+    if new_account_hours is not None:
+        guild_cfg["guard_new_account_hours"] = max(1, min(168, new_account_hours))
+
+    save_settings()
+    await ctx.send(
+        f"🛡️ Guard for **{guild.name}**\n"
+        f"- Enabled: `{guild_cfg.get('guard_enabled', False)}`\n"
+        f"- Threshold: `{guild_cfg.get('guard_threshold', 8)}`\n"
+        f"- Window: `{guild_cfg.get('guard_window_seconds', 30)}s`\n"
+        f"- New account age: `{guild_cfg.get('guard_new_account_hours', 24)}h`\n"
+        f"- Auto slowmode: `{guild_cfg.get('guard_slowmode_seconds', 30)}s`"
+    )
+
+
+@bot.hybrid_command(name="ops")
+async def ops(ctx: commands.Context):
+    """Operational intelligence summary for this server."""
+    result = await require_guild_context(ctx)
+    if not result:
+        return
+    guild, guild_cfg = result
+    now = datetime.now(timezone.utc)
+    active_votes = sum(1 for vote_id in vote_store if vote_id.startswith(f"{guild.id}-"))
+    pending_reminders = sum(
+        1
+        for reminder in reminders
+        if reminder.get("guild_id") == guild.id and (parse_datetime_utc(reminder.get("due_at")) or now) > now
+    )
+
+    case_entries = modlog.get(str(guild.id), [])
+    recent_window = now - timedelta(hours=24)
+    recent_cases = [
+        case for case in case_entries if (parse_datetime_utc(case.get("created_at")) or now) >= recent_window
+    ]
+    actions_count: dict[str, int] = defaultdict(int)
+    for case in recent_cases:
+        actions_count[str(case.get("action", "unknown"))] += 1
+    top_actions = sorted(actions_count.items(), key=lambda item: item[1], reverse=True)[:3]
+
+    embed = discord.Embed(title=f"Ops Report: {guild.name}", color=discord.Color.red())
+    embed.add_field(name="Members", value=str(guild.member_count), inline=True)
+    embed.add_field(name="Active Votes", value=str(active_votes), inline=True)
+    embed.add_field(name="Pending Reminders", value=str(pending_reminders), inline=True)
+    embed.add_field(name="Mod Cases (24h)", value=str(len(recent_cases)), inline=True)
+    embed.add_field(name="Guard", value="ON" if guild_cfg.get("guard_enabled") else "OFF", inline=True)
+    embed.add_field(
+        name="Top Actions (24h)",
+        value=", ".join(f"{action}:{count}" for action, count in top_actions) if top_actions else "No recent actions",
+        inline=False,
+    )
+    embed.set_footer(text=f"Generated at {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    await ctx.send(embed=embed)
+
+    ops_channel_id = guild_cfg.get("ops_channel_id")
+    if ops_channel_id and ctx.channel.id != ops_channel_id:
+        ops_channel = guild.get_channel(ops_channel_id)
+        if ops_channel and hasattr(ops_channel, "send"):
+            try:
+                await ops_channel.send(embed=embed)
+            except Exception:
+                pass
+
+
+@bot.hybrid_command(name="health")
+async def health(ctx: commands.Context):
+    """Runtime health and dependency checks."""
+    checks: list[tuple[str, str]] = []
+    checks.append(("Discord", "OK"))
+    checks.append(("Latency", f"{round(bot.latency * 1000)}ms"))
+    checks.append(("Settings File", "OK" if os.path.exists(SETTINGS_FILE) else "MISSING"))
+    checks.append(("Reminders File", "OK" if os.path.exists(REMINDERS_FILE) else "MISSING"))
+    checks.append(("Mod Log File", "OK" if os.path.exists(MOD_LOG_FILE) else "MISSING"))
+
+    ai_status = "DISABLED"
+    if AI_SERVER_URL:
+        try:
+            response = await asyncio.to_thread(requests.get, AI_SERVER_URL, timeout=4)
+            ai_status = f"HTTP {response.status_code}"
+        except Exception:
+            ai_status = "UNREACHABLE"
+    checks.append(("AI Backend", ai_status))
+
+    embed = discord.Embed(title="Vanguard Health", color=discord.Color.red())
+    for key, value in checks:
+        embed.add_field(name=key, value=value, inline=True)
+    embed.set_footer(text=f"Uptime: {format_duration(int((datetime.now(timezone.utc) - START_TIME).total_seconds()))}")
+    await ctx.send(embed=embed)
+
+
+@bot.hybrid_command(name="privacy")
+async def privacy(ctx: commands.Context):
+    """Show Privacy Policy link."""
+    if PRIVACY_URL:
+        await ctx.send(f"Privacy Policy: {PRIVACY_URL}")
+    else:
+        await ctx.send("Privacy policy link not configured. Set `PRIVACY_POLICY_URL` in `.env`.")
+
+
+@bot.hybrid_command(name="tos")
+async def tos(ctx: commands.Context):
+    """Show Terms of Service link."""
+    if TOS_URL:
+        await ctx.send(f"Terms of Service: {TOS_URL}")
+    else:
+        await ctx.send("ToS link not configured. Set `TERMS_OF_SERVICE_URL` in `.env`.")
+
+
+@bot.hybrid_command(name="data")
+async def data(ctx: commands.Context):
+    """Explain what data the bot stores and how to request deletion."""
+    await ctx.send(
+        "I store server config, moderation cases, reminders, and vote state to operate features. "
+        "Use `/privacy` and `/tos` for full policy links."
+    )
 
 @bot.hybrid_command()
 async def ping(ctx: commands.Context):
@@ -925,6 +1390,18 @@ async def purge(ctx: commands.Context, amount: int):
         await ctx.send("⚠️ Amount must be between 1 and 200.")
         return
     deleted = await ctx.channel.purge(limit=amount + 1)
+    case_id = log_moderation_action(
+        guild_id=ctx.guild.id,
+        action="purge",
+        actor_id=ctx.author.id,
+        reason=f"Purged {max(len(deleted) - 1, 0)} messages",
+        details=f"channel_id={ctx.channel.id}",
+        undoable=False,
+    )
+    await send_ops_log(
+        ctx.guild,
+        f"📘 Case `{case_id}` {ctx.author.mention} purged `{max(len(deleted) - 1, 0)}` messages in {ctx.channel.mention}.",
+    )
     confirmation = await ctx.send(f"🧹 Deleted `{max(len(deleted) - 1, 0)}` messages.")
     await asyncio.sleep(4)
     try:
@@ -943,7 +1420,22 @@ async def slowmode(ctx: commands.Context, seconds: int):
     if seconds < 0 or seconds > 21600:
         await ctx.send("⚠️ Slowmode must be between 0 and 21600 seconds.")
         return
+    old_slowmode = ctx.channel.slowmode_delay
     await ctx.channel.edit(slowmode_delay=seconds)
+    case_id = log_moderation_action(
+        guild_id=ctx.guild.id,
+        action="slowmode",
+        actor_id=ctx.author.id,
+        reason=f"Set slowmode to {seconds}s",
+        details=json.dumps(
+            {"channel_id": ctx.channel.id, "old_slowmode": old_slowmode, "new_slowmode": seconds}
+        ),
+        undoable=True,
+    )
+    await send_ops_log(
+        ctx.guild,
+        f"📘 Case `{case_id}` {ctx.author.mention} set slowmode in {ctx.channel.mention} from `{old_slowmode}` to `{seconds}`.",
+    )
     await ctx.send(f"✅ Slowmode set to `{seconds}` second(s).")
 
 
@@ -961,7 +1453,21 @@ async def nick(ctx: commands.Context, member: discord.Member, *, nickname: str |
     if not can_manage_target(ctx.author, member):
         await ctx.send("⛔ You cannot edit that member's nickname.")
         return
+    old_nickname = member.nick
     await member.edit(nick=nickname[:32] if nickname else None, reason=f"Requested by {ctx.author}")
+    case_id = log_moderation_action(
+        guild_id=ctx.guild.id,
+        action="nick",
+        actor_id=ctx.author.id,
+        target_id=member.id,
+        reason="Nickname updated",
+        details=json.dumps({"old_nick": old_nickname, "new_nick": nickname[:32] if nickname else None}),
+        undoable=True,
+    )
+    await send_ops_log(
+        ctx.guild,
+        f"📘 Case `{case_id}` {ctx.author.mention} changed nickname for {member.mention}.",
+    )
     if nickname:
         await ctx.send(f"✅ Updated nickname for {member.mention} to `{nickname[:32]}`.")
     else:
@@ -996,6 +1502,19 @@ async def timeout(ctx: commands.Context, member: discord.Member, duration: str, 
 
     until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
     await member.timeout(until, reason=reason or f"Timed out by {ctx.author}")
+    case_id = log_moderation_action(
+        guild_id=ctx.guild.id,
+        action="timeout",
+        actor_id=ctx.author.id,
+        target_id=member.id,
+        reason=reason or "",
+        details=json.dumps({"until": until.isoformat(), "duration_seconds": seconds}),
+        undoable=True,
+    )
+    await send_ops_log(
+        ctx.guild,
+        f"📘 Case `{case_id}` {ctx.author.mention} timed out {member.mention} for `{format_duration(seconds)}`.",
+    )
     await ctx.send(
         f"✅ {member.mention} timed out for `{format_duration(seconds)}` "
         f"(<t:{int(until.timestamp())}:R>)."
@@ -1018,7 +1537,138 @@ async def untimeout(ctx: commands.Context, member: discord.Member, *, reason: st
         return
 
     await member.timeout(None, reason=reason or f"Timeout removed by {ctx.author}")
+    case_id = log_moderation_action(
+        guild_id=ctx.guild.id,
+        action="untimeout",
+        actor_id=ctx.author.id,
+        target_id=member.id,
+        reason=reason or "",
+        details="",
+        undoable=False,
+    )
+    await send_ops_log(
+        ctx.guild,
+        f"📘 Case `{case_id}` {ctx.author.mention} removed timeout for {member.mention}.",
+    )
     await ctx.send(f"✅ Timeout removed for {member.mention}.")
+
+
+@bot.hybrid_command()
+@commands.has_permissions(moderate_members=True)
+async def warn(ctx: commands.Context, member: discord.Member, *, reason: str):
+    """Issue a warning and record a moderation case."""
+    if ctx.guild is None or not isinstance(ctx.author, discord.Member):
+        await ctx.send("⚠️ This command can only be used in a server.")
+        return
+    if not can_manage_target(ctx.author, member):
+        await ctx.send("⛔ You cannot warn that member.")
+        return
+    case_id = log_moderation_action(
+        guild_id=ctx.guild.id,
+        action="warn",
+        actor_id=ctx.author.id,
+        target_id=member.id,
+        reason=reason,
+        undoable=False,
+    )
+    await send_ops_log(
+        ctx.guild,
+        f"📘 Case `{case_id}` {ctx.author.mention} warned {member.mention}: {reason}",
+    )
+    await ctx.send(f"⚠️ {member.mention} warned. Case `{case_id}`.")
+
+
+@bot.hybrid_command(name="cases")
+@commands.has_permissions(moderate_members=True)
+async def cases(ctx: commands.Context, member: discord.Member | None = None, limit: int = 10):
+    """List recent moderation cases, optionally filtered by member."""
+    if ctx.guild is None:
+        await ctx.send("⚠️ This command can only be used in a server.")
+        return
+    entries = modlog.get(str(ctx.guild.id), [])
+    if member:
+        entries = [entry for entry in entries if entry.get("target_id") == member.id]
+    if not entries:
+        await ctx.send("No cases found.")
+        return
+    limit = max(1, min(20, limit))
+    lines = []
+    for entry in sorted(entries, key=lambda item: item.get("case_id", 0), reverse=True)[:limit]:
+        created_at = parse_datetime_utc(entry.get("created_at"))
+        when = f"<t:{int(created_at.timestamp())}:R>" if created_at else "unknown"
+        target_id = entry.get("target_id")
+        target_text = f"<@{target_id}>" if target_id else "n/a"
+        lines.append(
+            f"`{entry.get('case_id')}` {entry.get('action')} • target: {target_text} • "
+            f"by <@{entry.get('actor_id')}> • {when}"
+        )
+    await ctx.send("**Moderation cases:**\n" + "\n".join(lines))
+
+
+@bot.hybrid_command(name="undo")
+@commands.has_permissions(moderate_members=True)
+async def undo(ctx: commands.Context, case_id: int):
+    """Undo a supported moderation action by case ID."""
+    if ctx.guild is None:
+        await ctx.send("⚠️ This command can only be used in a server.")
+        return
+    entries = modlog.get(str(ctx.guild.id), [])
+    case = next((entry for entry in entries if entry.get("case_id") == case_id), None)
+    if case is None:
+        await ctx.send("❌ Case not found.")
+        return
+    if not case.get("undoable"):
+        await ctx.send("❌ This case is not undoable.")
+        return
+    if case.get("undone"):
+        await ctx.send("ℹ️ This case has already been undone.")
+        return
+
+    action = case.get("action")
+    details = case.get("details", "")
+    target_id = case.get("target_id")
+    target = ctx.guild.get_member(target_id) if target_id else None
+
+    try:
+        if action == "timeout" and target:
+            await target.timeout(None, reason=f"Undo case {case_id} by {ctx.author}")
+        elif action == "nick" and target:
+            payload = json.loads(details) if details else {}
+            old_nick = payload.get("old_nick")
+            await target.edit(nick=old_nick, reason=f"Undo case {case_id} by {ctx.author}")
+        elif action == "slowmode":
+            payload = json.loads(details) if details else {}
+            channel_id = payload.get("channel_id")
+            old_slowmode = int(payload.get("old_slowmode", 0))
+            channel = ctx.guild.get_channel(channel_id) if channel_id else None
+            if isinstance(channel, discord.TextChannel):
+                await channel.edit(slowmode_delay=old_slowmode)
+            else:
+                await ctx.send("❌ Could not find channel for slowmode undo.")
+                return
+        else:
+            await ctx.send("❌ Undo target is no longer available.")
+            return
+    except Exception as exc:
+        await ctx.send(f"❌ Undo failed: {exc}")
+        return
+
+    case["undone"] = True
+    save_modlog()
+    undo_case = log_moderation_action(
+        guild_id=ctx.guild.id,
+        action="undo",
+        actor_id=ctx.author.id,
+        target_id=target_id,
+        reason=f"Undo case {case_id}",
+        details=f"source_case={case_id}",
+        undoable=False,
+    )
+    await send_ops_log(
+        ctx.guild,
+        f"📘 Case `{undo_case}` {ctx.author.mention} undid case `{case_id}` ({action}).",
+    )
+    await ctx.send(f"✅ Undid case `{case_id}` ({action}).")
 
 
 @bot.hybrid_command()
@@ -1350,6 +2000,8 @@ async def showconfig(ctx: commands.Context):
 
     welcome_channel = guild.get_channel(guild_cfg.get("welcome_channel_id")) if guild_cfg.get("welcome_channel_id") else None
     welcome_role = resolve_role(guild, guild_cfg.get("welcome_role_id"))
+    log_channel = guild.get_channel(guild_cfg.get("log_channel_id")) if guild_cfg.get("log_channel_id") else None
+    ops_channel = guild.get_channel(guild_cfg.get("ops_channel_id")) if guild_cfg.get("ops_channel_id") else None
     lockdown_role = resolve_role(guild, guild_cfg.get("lockdown_role_id")) if guild_cfg.get("lockdown_role_id") else guild.default_role
     mod_roles = [resolve_role(guild, role_id) for role_id in guild_cfg.get("mod_role_ids", [])]
     mod_roles = [role for role in mod_roles if role]
@@ -1375,6 +2027,16 @@ async def showconfig(ctx: commands.Context):
         inline=False,
     )
     embed.add_field(
+        name="Log Channel",
+        value=log_channel.mention if isinstance(log_channel, discord.TextChannel) else "Not set",
+        inline=False,
+    )
+    embed.add_field(
+        name="Ops Channel",
+        value=ops_channel.mention if isinstance(ops_channel, discord.TextChannel) else "Not set",
+        inline=False,
+    )
+    embed.add_field(
         name="Lockdown Role",
         value=lockdown_role.mention if lockdown_role else "Missing role",
         inline=False,
@@ -1387,6 +2049,15 @@ async def showconfig(ctx: commands.Context):
     embed.add_field(
         name="Minecraft Server",
         value=f"`{host}:{port}`" if host else "Not set",
+        inline=False,
+    )
+    embed.add_field(
+        name="Guard",
+        value=(
+            f"enabled={guild_cfg.get('guard_enabled', False)}, "
+            f"threshold={guild_cfg.get('guard_threshold', 8)}, "
+            f"window={guild_cfg.get('guard_window_seconds', 30)}s"
+        ),
         inline=False,
     )
     await ctx.send(embed=embed)
