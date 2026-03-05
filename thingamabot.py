@@ -455,6 +455,12 @@ def resolve_role(guild: discord.Guild, role_id: int | None) -> discord.Role | No
     return guild.get_role(role_id)
 
 
+def resolve_default_role(guild: discord.Guild) -> discord.Role | None:
+    if guild.default_role is not None:
+        return guild.default_role
+    return guild.get_role(guild.id)
+
+
 def has_elevated_permissions(perms: discord.Permissions | None) -> bool:
     if perms is None:
         return False
@@ -703,7 +709,7 @@ async def set_lockdown_state(ctx: commands.Context, locked: bool) -> None:
 
     guild, guild_cfg = result
     target_role_id = guild_cfg.get("lockdown_role_id")
-    target_role = resolve_role(guild, target_role_id) if target_role_id else guild.default_role
+    target_role = resolve_role(guild, target_role_id) if target_role_id else resolve_default_role(guild)
     if target_role is None:
         await ctx.send("⚠️ Configured lockdown role no longer exists. Set it again with `/setlockdownrole`.")
         return
@@ -1134,7 +1140,9 @@ async def setup_command(
     if ops_channel:
         guild_cfg["ops_channel_id"] = ops_channel.id
     if guild_cfg.get("lockdown_role_id") is None:
-        guild_cfg["lockdown_role_id"] = guild.default_role.id
+        default_role = resolve_default_role(guild)
+        if default_role is not None:
+            guild_cfg["lockdown_role_id"] = default_role.id
 
     save_settings()
     mod_roles_text = ", ".join(f"<@&{rid}>" for rid in guild_cfg.get("mod_role_ids", [])) or "not set"
@@ -2131,7 +2139,9 @@ async def setlockdownrole(ctx: commands.Context, role: discord.Role | None = Non
     if role:
         await ctx.send(f"✅ Lockdown role set to `{role.name}`.")
     else:
-        await ctx.send(f"✅ Lockdown role reset to default `{guild.default_role.name}`.")
+        default_role = resolve_default_role(guild)
+        default_name = default_role.name if default_role is not None else "@everyone"
+        await ctx.send(f"✅ Lockdown role reset to default `{default_name}`.")
 
 
 @bot.hybrid_command(name="setmodroles")
@@ -2207,7 +2217,11 @@ async def showconfig(ctx: commands.Context):
     welcome_role = resolve_role(guild, guild_cfg.get("welcome_role_id"))
     log_channel = guild.get_channel(guild_cfg.get("log_channel_id")) if guild_cfg.get("log_channel_id") else None
     ops_channel = guild.get_channel(guild_cfg.get("ops_channel_id")) if guild_cfg.get("ops_channel_id") else None
-    lockdown_role = resolve_role(guild, guild_cfg.get("lockdown_role_id")) if guild_cfg.get("lockdown_role_id") else guild.default_role
+    lockdown_role = (
+        resolve_role(guild, guild_cfg.get("lockdown_role_id"))
+        if guild_cfg.get("lockdown_role_id")
+        else resolve_default_role(guild)
+    )
     mod_roles = [resolve_role(guild, role_id) for role_id in guild_cfg.get("mod_role_ids", [])]
     mod_roles = [role for role in mod_roles if role]
 
