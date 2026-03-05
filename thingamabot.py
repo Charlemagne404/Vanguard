@@ -761,6 +761,12 @@ async def require_mod_context(
 
 
 async def set_lockdown_state(ctx: commands.Context, locked: bool) -> None:
+    if ctx.interaction is not None and not ctx.interaction.response.is_done():
+        try:
+            await ctx.defer()
+        except Exception:
+            pass
+
     result = await require_mod_context(ctx)
     if not result:
         return
@@ -794,7 +800,7 @@ async def set_lockdown_state(ctx: commands.Context, locked: bool) -> None:
     embed.add_field(name="Channels updated", value=str(updated), inline=True)
     embed.add_field(name="Channels failed", value=str(failed), inline=True)
     embed.set_footer(text=f"Triggered by {ctx.author.display_name}")
-    await ctx.send(embed=embed)
+    await safe_ctx_send(ctx, embed=embed)
     case_id = log_moderation_action(
         guild_id=guild.id,
         action="lockdown" if locked else "unlock",
@@ -867,6 +873,22 @@ async def send_chunked_message(ctx: commands.Context, text: str, chunk_size: int
         await ctx.send(payload[index : index + chunk_size])
 
 
+async def safe_ctx_send(ctx: commands.Context, *args: Any, **kwargs: Any):
+    try:
+        return await ctx.send(*args, **kwargs)
+    except discord.NotFound:
+        # Interaction responses can expire on long-running slash/hybrid commands.
+        channel = getattr(ctx, "channel", None)
+        if channel is None or not hasattr(channel, "send"):
+            return None
+        fallback_kwargs = dict(kwargs)
+        fallback_kwargs.pop("ephemeral", None)
+        try:
+            return await channel.send(*args, **fallback_kwargs)
+        except Exception:
+            return None
+
+
 async def reminder_worker() -> None:
     while not bot.is_closed():
         try:
@@ -877,7 +899,8 @@ async def reminder_worker() -> None:
 
 
 intents = discord.Intents.default()
-intents.message_content = False
+# Hybrid/prefix commands require message content intent for text command parsing.
+intents.message_content = True
 intents.guilds = True
 intents.members = True
 
@@ -1040,31 +1063,31 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(err, commands.CommandNotFound):
         return
     if isinstance(err, commands.NotOwner):
-        await ctx.send("⛔ This command is owner-only.")
+        await safe_ctx_send(ctx, "⛔ This command is owner-only.")
         return
     if isinstance(err, commands.MissingPermissions):
         missing = ", ".join(err.missing_permissions)
-        await ctx.send(f"⛔ Missing required permissions: `{missing}`.")
+        await safe_ctx_send(ctx, f"⛔ Missing required permissions: `{missing}`.")
         return
     if isinstance(err, commands.BotMissingPermissions):
         missing = ", ".join(err.missing_permissions)
-        await ctx.send(f"⛔ I am missing permissions: `{missing}`.")
+        await safe_ctx_send(ctx, f"⛔ I am missing permissions: `{missing}`.")
         return
     if isinstance(err, commands.CheckFailure):
-        await ctx.send("⛔ You do not have permission to run this command.")
+        await safe_ctx_send(ctx, "⛔ You do not have permission to run this command.")
         return
     if isinstance(err, commands.CommandOnCooldown):
-        await ctx.send(f"⏳ Slow down. Try again in `{err.retry_after:.1f}` seconds.")
+        await safe_ctx_send(ctx, f"⏳ Slow down. Try again in `{err.retry_after:.1f}` seconds.")
         return
     if isinstance(err, app_commands.TransformerError):
         if is_channel_transform_error(err):
-            await ctx.send("⚠️ Invalid channel type for that option. Choose a normal text channel.")
+            await safe_ctx_send(ctx, "⚠️ Invalid channel type for that option. Choose a normal text channel.")
         else:
-            await ctx.send("⚠️ Invalid argument. Check the command format and try again.")
+            await safe_ctx_send(ctx, "⚠️ Invalid argument. Check the command format and try again.")
         return
     if isinstance(err, commands.MissingRequiredArgument):
         usage = f"{ctx.clean_prefix}{ctx.command.qualified_name} {ctx.command.signature}"
-        await ctx.send(f"⚠️ Missing argument `{err.param.name}`.\nUsage: `{usage}`")
+        await safe_ctx_send(ctx, f"⚠️ Missing argument `{err.param.name}`.\nUsage: `{usage}`")
         return
     if isinstance(
         err,
@@ -1076,12 +1099,12 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
             commands.ChannelNotFound,
         ),
     ):
-        await ctx.send("⚠️ Invalid argument. Check the command format and try again.")
+        await safe_ctx_send(ctx, "⚠️ Invalid argument. Check the command format and try again.")
         return
 
     print("[ERROR] Unhandled command error:")
     traceback.print_exception(type(err), err, err.__traceback__)
-    await ctx.send("❌ Unexpected error while running that command.")
+    await safe_ctx_send(ctx, "❌ Unexpected error while running that command.")
 
 
 @bot.tree.error

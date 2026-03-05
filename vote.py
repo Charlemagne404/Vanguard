@@ -304,6 +304,22 @@ def _safe_channel_slug(name: str) -> str:
     slug = "-".join(part for part in "".join(slug_chars).split("-") if part)
     return slug or "user"
 
+
+async def _delete_vote_channel_later(bot, channel_id, delay_seconds=3600):
+    await asyncio.sleep(max(0, int(delay_seconds)))
+    try:
+        ch = bot.get_channel(channel_id) if channel_id is not None else None
+        bot_member = None
+        if ch:
+            bot_member = ch.guild.me
+            if bot_member is None and bot.user:
+                bot_member = ch.guild.get_member(bot.user.id)
+        if ch and bot_member and ch.permissions_for(bot_member).manage_channels:
+            await ch.delete(reason="Vote ended")
+    except Exception:
+        pass
+
+
 async def finish_vote(bot, vote_id):
     vote = votes.get(vote_id)
     if not vote:
@@ -348,19 +364,8 @@ async def finish_vote(bot, vote_id):
             except Exception:
                 pass
             await channel.send(f"🔔 **VOTE ENDED** — {result}\nStarter: <@{starter_id}>, Target: <@{target_id}>")
-            # delete vote channel after 1 hour for cleanliness
-            await asyncio.sleep(3600)
-            try:
-                ch = bot.get_channel(channel_id) if channel_id is not None else None
-                bot_member = None
-                if ch:
-                    bot_member = ch.guild.me
-                    if bot_member is None and bot.user:
-                        bot_member = ch.guild.get_member(bot.user.id)
-                if ch and bot_member and ch.permissions_for(bot_member).manage_channels:
-                    await ch.delete(reason="Vote ended")
-            except Exception:
-                pass
+            # Delete the vote channel later, but close and purge vote state immediately.
+            asyncio.create_task(_delete_vote_channel_later(bot, channel_id, delay_seconds=3600))
     except Exception as e:
         print("Error finishing vote:", e)
     finally:
@@ -441,7 +446,7 @@ def setup_vote_module(bot: commands.Bot):
         if not category:
             try:
                 category = await guild.create_category(category_name)
-            except Exception as e:
+            except Exception:
                 await ctx.send("⚠️ Could not create vote category. Check bot permissions.")
                 return
 
@@ -450,7 +455,7 @@ def setup_vote_module(bot: commands.Bot):
 
         try:
             vote_channel = await guild.create_text_channel(channel_name, category=category)
-        except Exception as e:
+        except Exception:
             await ctx.send("⚠️ Could not create vote channel. Check bot permissions.")
             return
 
