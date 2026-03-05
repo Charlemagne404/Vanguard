@@ -556,7 +556,7 @@ async def reminder_worker() -> None:
 
 
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = False
 intents.guilds = True
 intents.members = True
 
@@ -591,6 +591,12 @@ async def on_ready():
         await restore_vote_state(bot)
     except Exception as exc:
         print(f"[VOTE] Restore failed: {exc}")
+
+    try:
+        synced = await bot.tree.sync()
+        print(f"[SYNC] Synced {len(synced)} slash command(s)")
+    except Exception as exc:
+        print(f"[SYNC] Slash command sync failed: {exc}")
 
     if reminder_loop_task is None or reminder_loop_task.done():
         reminder_loop_task = asyncio.create_task(reminder_worker())
@@ -671,7 +677,7 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     await ctx.send("❌ Unexpected error while running that command.")
 
 
-@bot.command(name="help")
+@bot.hybrid_command(name="help")
 async def help_command(ctx: commands.Context, *, command_name: str | None = None):
     """Show help for all commands or a specific command."""
     if command_name:
@@ -726,20 +732,20 @@ async def help_command(ctx: commands.Context, *, command_name: str | None = None
     await ctx.send(embed=embed)
 
 
-@bot.command()
+@bot.hybrid_command()
 async def ping(ctx: commands.Context):
     """Show bot latency."""
     await ctx.send(f"🏓 Pong: `{round(bot.latency * 1000)}ms`")
 
 
-@bot.command()
+@bot.hybrid_command()
 async def uptime(ctx: commands.Context):
     """Show bot uptime."""
     elapsed = int((datetime.now(timezone.utc) - START_TIME).total_seconds())
     await ctx.send(f"⏱️ Uptime: `{format_duration(elapsed)}`")
 
 
-@bot.command()
+@bot.hybrid_command()
 async def botstats(ctx: commands.Context):
     """Show overall bot stats."""
     unique_user_count = len({member.id for guild in bot.guilds for member in guild.members})
@@ -751,7 +757,7 @@ async def botstats(ctx: commands.Context):
     await ctx.send(embed=embed)
 
 
-@bot.command()
+@bot.hybrid_command()
 async def avatar(ctx: commands.Context, member: discord.Member | None = None):
     """Show a user's avatar."""
     target = member or ctx.author
@@ -763,7 +769,7 @@ async def avatar(ctx: commands.Context, member: discord.Member | None = None):
     await ctx.send(embed=embed)
 
 
-@bot.command()
+@bot.hybrid_command()
 async def userinfo(ctx: commands.Context, member: discord.Member | None = None):
     """Show information about a server member."""
     if ctx.guild is None:
@@ -784,7 +790,7 @@ async def userinfo(ctx: commands.Context, member: discord.Member | None = None):
     await ctx.send(embed=embed)
 
 
-@bot.command()
+@bot.hybrid_command()
 async def choose(ctx: commands.Context, *, options: str):
     """Choose randomly from options separated by |."""
     choices = [choice.strip() for choice in options.split("|") if choice.strip()]
@@ -794,7 +800,7 @@ async def choose(ctx: commands.Context, *, options: str):
     await ctx.send(f"🎲 I choose: **{random.choice(choices)}**")
 
 
-@bot.command()
+@bot.hybrid_command()
 async def roll(ctx: commands.Context, notation: str = "1d6"):
     """Roll dice using NdS notation, e.g. 2d20."""
     match = re.fullmatch(r"(\d{1,2})d(\d{1,4})", notation.lower().strip())
@@ -810,7 +816,7 @@ async def roll(ctx: commands.Context, notation: str = "1d6"):
     await ctx.send(f"🎲 Rolled `{notation}`: {', '.join(map(str, rolls))} (total: **{sum(rolls)}**)")
 
 
-@bot.command()
+@bot.hybrid_command()
 async def poll(ctx: commands.Context, *, content: str):
     """Create a poll. Format: question | option1 | option2 ... (or yes/no with question only)."""
     parts = [part.strip() for part in content.split("|") if part.strip()]
@@ -842,7 +848,7 @@ async def poll(ctx: commands.Context, *, content: str):
         await message.add_reaction(number_emojis[i])
 
 
-@bot.command()
+@bot.hybrid_command()
 async def remindme(ctx: commands.Context, duration: str, *, message: str):
     """Create a reminder. Example: !remindme 2h30m stretch."""
     seconds = parse_duration_to_seconds(duration)
@@ -872,7 +878,7 @@ async def remindme(ctx: commands.Context, duration: str, *, message: str):
     )
 
 
-@bot.command(name="reminders")
+@bot.hybrid_command(name="reminders")
 async def list_reminders(ctx: commands.Context):
     """List your active reminders."""
     mine = [reminder for reminder in reminders if reminder["user_id"] == ctx.author.id]
@@ -891,7 +897,7 @@ async def list_reminders(ctx: commands.Context):
     await ctx.send("**Your reminders:**\n" + "\n".join(lines))
 
 
-@bot.command(name="cancelreminder", aliases=["delreminder"])
+@bot.hybrid_command(name="cancelreminder", aliases=["delreminder"])
 async def cancel_reminder(ctx: commands.Context, reminder_id: int):
     """Cancel one of your reminders by ID."""
     global reminders
@@ -908,7 +914,7 @@ async def cancel_reminder(ctx: commands.Context, reminder_id: int):
     await ctx.send(f"✅ Reminder `{reminder_id}` canceled.")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(manage_messages=True)
 async def purge(ctx: commands.Context, amount: int):
     """Delete recent messages in the current channel."""
@@ -927,7 +933,7 @@ async def purge(ctx: commands.Context, amount: int):
         pass
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(manage_channels=True)
 async def slowmode(ctx: commands.Context, seconds: int):
     """Set channel slowmode in seconds (0 disables)."""
@@ -941,7 +947,7 @@ async def slowmode(ctx: commands.Context, seconds: int):
     await ctx.send(f"✅ Slowmode set to `{seconds}` second(s).")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(manage_nicknames=True)
 async def nick(ctx: commands.Context, member: discord.Member, *, nickname: str | None = None):
     """Change or clear a member nickname."""
@@ -962,7 +968,7 @@ async def nick(ctx: commands.Context, member: discord.Member, *, nickname: str |
         await ctx.send(f"✅ Cleared nickname for {member.mention}.")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(moderate_members=True)
 async def timeout(ctx: commands.Context, member: discord.Member, duration: str, *, reason: str | None = None):
     """Timeout a member. Example: !timeout @user 30m spam"""
@@ -996,7 +1002,7 @@ async def timeout(ctx: commands.Context, member: discord.Member, duration: str, 
     )
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(moderate_members=True)
 async def untimeout(ctx: commands.Context, member: discord.Member, *, reason: str | None = None):
     """Remove a member timeout."""
@@ -1015,7 +1021,7 @@ async def untimeout(ctx: commands.Context, member: discord.Member, *, reason: st
     await ctx.send(f"✅ Timeout removed for {member.mention}.")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.cooldown(3, 30, commands.BucketType.user)
 async def vanguard(ctx: commands.Context, *, question: str):
     """Ask the AI server a question and get a response."""
@@ -1049,21 +1055,21 @@ async def vanguard(ctx: commands.Context, *, question: str):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="flaguser", aliases=["fuck"])
+@bot.hybrid_command(name="flaguser", aliases=["fuck"])
 @commands.is_owner()
 async def flaguser(ctx: commands.Context, target: str):
     """Owner-only: mark a user in backend moderation service."""
     await send_backend_user_update(ctx, target, FLAG_USER_URL, "has been flagged")
 
 
-@bot.command(name="unflaguser", aliases=["unfuck"])
+@bot.hybrid_command(name="unflaguser", aliases=["unfuck"])
 @commands.is_owner()
 async def unflaguser(ctx: commands.Context, target: str):
     """Owner-only: remove a backend moderation flag for a user."""
     await send_backend_user_update(ctx, target, UNFLAG_USER_URL, "has been unflagged")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.is_owner()
 async def owneronly(ctx: commands.Context, state: str | None = None):
     """Owner-only: toggle global owner-only mode. Usage: !owneronly on|off"""
@@ -1085,7 +1091,7 @@ async def owneronly(ctx: commands.Context, state: str | None = None):
     await ctx.send(f"Owner-only mode set to `{'ON' if settings['owner_only'] else 'OFF'}`.")
 
 
-@bot.command()
+@bot.hybrid_command()
 async def testwelcome(ctx: commands.Context, target: discord.Member | None = None):
     """Send a preview welcome embed."""
     result = await require_guild_context(ctx)
@@ -1099,7 +1105,7 @@ async def testwelcome(ctx: commands.Context, target: discord.Member | None = Non
     await ctx.send(embed=build_welcome_embed(member, guild_cfg))
 
 
-@bot.command()
+@bot.hybrid_command()
 async def rules(ctx: commands.Context):
     embed = discord.Embed(
         title="Server Rules",
@@ -1115,7 +1121,7 @@ async def rules(ctx: commands.Context):
     await ctx.send(embed=embed)
 
 
-@bot.command()
+@bot.hybrid_command()
 async def serverinfo(ctx: commands.Context):
     if ctx.guild is None:
         await ctx.send("⚠️ This command can only be used in a server.")
@@ -1138,7 +1144,7 @@ async def serverinfo(ctx: commands.Context):
     await ctx.send(embed=embed)
 
 
-@bot.command()
+@bot.hybrid_command()
 async def mcstatus(ctx: commands.Context):
     result = await require_guild_context(ctx)
     if not result:
@@ -1167,17 +1173,17 @@ async def mcstatus(ctx: commands.Context):
         await ctx.send(f"❌ Minecraft server `{host}:{port}` is offline or unreachable.")
 
 
-@bot.command()
+@bot.hybrid_command()
 async def lockdown(ctx: commands.Context):
     await set_lockdown_state(ctx, True)
 
 
-@bot.command()
+@bot.hybrid_command()
 async def unlock(ctx: commands.Context):
     await set_lockdown_state(ctx, False)
 
 
-@bot.command(name="prefix")
+@bot.hybrid_command(name="prefix")
 async def prefix_command(ctx: commands.Context, new_prefix: str | None = None):
     """Show or set this server's command prefix."""
     if ctx.guild is None:
@@ -1215,7 +1221,7 @@ async def prefix_command(ctx: commands.Context, new_prefix: str | None = None):
     await ctx.send(f"✅ Prefix updated from `{current_prefix}` to `{candidate}`.")
 
 
-@bot.command(name="setwelcomechannel")
+@bot.hybrid_command(name="setwelcomechannel")
 async def setwelcomechannel(ctx: commands.Context, channel: discord.TextChannel | None = None):
     """Mod/admin: set welcome channel. Omit to clear."""
     result = await require_mod_context(ctx)
@@ -1230,7 +1236,7 @@ async def setwelcomechannel(ctx: commands.Context, channel: discord.TextChannel 
         await ctx.send("✅ Welcome channel cleared. System/default channel fallback will be used.")
 
 
-@bot.command(name="setwelcomerole")
+@bot.hybrid_command(name="setwelcomerole")
 async def setwelcomerole(ctx: commands.Context, role: discord.Role | None = None):
     """Mod/admin: set role to auto-assign on join. Omit to clear."""
     result = await require_mod_context(ctx)
@@ -1245,7 +1251,7 @@ async def setwelcomerole(ctx: commands.Context, role: discord.Role | None = None
         await ctx.send("✅ Welcome role cleared.")
 
 
-@bot.command(name="setwelcomemessage")
+@bot.hybrid_command(name="setwelcomemessage")
 async def setwelcomemessage(ctx: commands.Context, *, message: str | None = None):
     """Mod/admin: set welcome message. Supports {user}, {username}, {server}. Use `clear` to reset."""
     result = await require_mod_context(ctx)
@@ -1262,7 +1268,7 @@ async def setwelcomemessage(ctx: commands.Context, *, message: str | None = None
     await ctx.send("✅ Welcome message updated.")
 
 
-@bot.command(name="setlockdownrole")
+@bot.hybrid_command(name="setlockdownrole")
 async def setlockdownrole(ctx: commands.Context, role: discord.Role | None = None):
     """Mod/admin: set role targeted by lockdown. Omit to use @everyone."""
     result = await require_mod_context(ctx)
@@ -1277,22 +1283,35 @@ async def setlockdownrole(ctx: commands.Context, role: discord.Role | None = Non
         await ctx.send(f"✅ Lockdown role reset to default `{guild.default_role.name}`.")
 
 
-@bot.command(name="setmodroles")
-async def setmodroles(ctx: commands.Context, *roles: discord.Role):
+@bot.hybrid_command(name="setmodroles")
+async def setmodroles(ctx: commands.Context, roles: str | None = None):
     """Mod/admin: set additional roles allowed to run moderation/config commands."""
     result = await require_mod_context(ctx)
     if not result:
         return
-    _, guild_cfg = result
-    guild_cfg["mod_role_ids"] = sorted({role.id for role in roles})
-    save_settings()
+    guild, guild_cfg = result
+
+    parsed_roles: list[discord.Role] = []
     if roles:
-        await ctx.send("✅ Mod roles set to: " + ", ".join(f"`{role.name}`" for role in roles))
+        for chunk in [part.strip() for part in roles.split(",") if part.strip()]:
+            role: discord.Role | None = None
+            role_id = extract_id(chunk)
+            if role_id:
+                role = guild.get_role(int(role_id))
+            if role is None:
+                role = discord.utils.get(guild.roles, name=chunk)
+            if role and role not in parsed_roles:
+                parsed_roles.append(role)
+
+    guild_cfg["mod_role_ids"] = sorted({role.id for role in parsed_roles})
+    save_settings()
+    if parsed_roles:
+        await ctx.send("✅ Mod roles set to: " + ", ".join(f"`{role.name}`" for role in parsed_roles))
     else:
         await ctx.send("✅ Mod role list cleared. Only Manage Server/Admin can run mod commands.")
 
 
-@bot.command(name="setmcserver")
+@bot.hybrid_command(name="setmcserver")
 async def setmcserver(ctx: commands.Context, host: str, port: int = 25565):
     """Mod/admin: configure this guild's Minecraft server host/port."""
     result = await require_mod_context(ctx)
@@ -1308,7 +1327,7 @@ async def setmcserver(ctx: commands.Context, host: str, port: int = 25565):
     await ctx.send(f"✅ Minecraft server set to `{guild_cfg['mc_host']}:{guild_cfg['mc_port']}`.")
 
 
-@bot.command(name="clearmcserver")
+@bot.hybrid_command(name="clearmcserver")
 async def clearmcserver(ctx: commands.Context):
     """Mod/admin: clear this guild's Minecraft server settings."""
     result = await require_mod_context(ctx)
@@ -1321,7 +1340,7 @@ async def clearmcserver(ctx: commands.Context):
     await ctx.send("✅ Minecraft server setting cleared for this server.")
 
 
-@bot.command(name="showconfig")
+@bot.hybrid_command(name="showconfig")
 async def showconfig(ctx: commands.Context):
     """Show active configuration for this server."""
     result = await require_guild_context(ctx)
@@ -1373,7 +1392,7 @@ async def showconfig(ctx: commands.Context):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="voteinfo")
+@bot.hybrid_command(name="voteinfo")
 async def voteinfo(ctx: commands.Context, vote_id: str):
     """Show who voted for what in a specific vote."""
     result = await require_guild_context(ctx)
@@ -1402,7 +1421,7 @@ async def voteinfo(ctx: commands.Context, vote_id: str):
         await ctx.send("**Vote results so far:**\n" + "\n".join(lines))
 
 
-@bot.command(name="activevotes")
+@bot.hybrid_command(name="activevotes")
 async def activevotes(ctx: commands.Context):
     """List active votes in this server."""
     result = await require_guild_context(ctx)
