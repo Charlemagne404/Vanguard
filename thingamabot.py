@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 from mcstatus import JavaServer
 import requests
@@ -35,6 +36,8 @@ MAX_REMINDER_SECONDS = 60 * 60 * 24 * 30
 MAX_TIMEOUT_SECONDS = 60 * 60 * 24 * 28
 MAX_CASES_PER_GUILD = 1000
 GUARD_COOLDOWN_SECONDS = 300
+MAX_DISCORD_MESSAGE_CHARS = 1900
+MAX_DISCORD_EMBED_DESCRIPTION_CHARS = 3900
 
 PRIVACY_URL = os.getenv("PRIVACY_POLICY_URL", "").strip()
 TOS_URL = os.getenv("TERMS_OF_SERVICE_URL", "").strip()
@@ -75,6 +78,30 @@ def as_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def clamp_text(value: Any, limit: int) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[:limit]
+    return text[: limit - 3] + "..."
+
+
+def write_json_atomic(path: str, payload: Any) -> None:
+    temp_path = f"{path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump(payload, file, indent=2, ensure_ascii=False)
+    os.replace(temp_path, path)
+
+
+def reset_json_file(path: str, payload: Any) -> Any:
+    try:
+        write_json_atomic(path, payload)
+    except OSError as exc:
+        print(f"[FILE] Failed writing {path}: {exc}")
+    return payload
 
 
 def parse_datetime_utc(value: Any) -> datetime | None:
@@ -154,7 +181,9 @@ def normalize_settings(raw: Any) -> dict[str, Any]:
 
         guard_slowmode_seconds = as_int(cfg.get("guard_slowmode_seconds"))
         guild_cfg["guard_slowmode_seconds"] = (
-            guard_slowmode_seconds if guard_slowmode_seconds and 0 <= guard_slowmode_seconds <= 21600 else 30
+            guard_slowmode_seconds
+            if guard_slowmode_seconds is not None and 0 <= guard_slowmode_seconds <= 21600
+            else 30
         )
 
         guilds[str(guild_id)] = guild_cfg
@@ -165,27 +194,23 @@ def normalize_settings(raw: Any) -> dict[str, Any]:
 
 def load_settings() -> dict[str, Any]:
     if not os.path.exists(SETTINGS_FILE):
-        initial = default_settings()
-        with open(SETTINGS_FILE, "w") as file:
-            json.dump(initial, file, indent=2)
-        return initial
+        return reset_json_file(SETTINGS_FILE, default_settings())
 
     try:
-        with open(SETTINGS_FILE, "r") as file:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as file:
             return normalize_settings(json.load(file))
     except (json.JSONDecodeError, OSError):
-        reset = default_settings()
-        with open(SETTINGS_FILE, "w") as file:
-            json.dump(reset, file, indent=2)
-        return reset
+        return reset_json_file(SETTINGS_FILE, default_settings())
 
 
 settings = load_settings()
 
 
 def save_settings() -> None:
-    with open(SETTINGS_FILE, "w") as file:
-        json.dump(settings, file, indent=2)
+    try:
+        write_json_atomic(SETTINGS_FILE, settings)
+    except OSError as exc:
+        print(f"[FILE] Failed saving settings: {exc}")
 
 
 def get_guild_config(guild_id: int) -> dict[str, Any]:
@@ -236,16 +261,12 @@ def normalize_reminders(raw: Any) -> list[dict[str, Any]]:
 
 def load_reminders() -> list[dict[str, Any]]:
     if not os.path.exists(REMINDERS_FILE):
-        with open(REMINDERS_FILE, "w") as file:
-            json.dump([], file, indent=2)
-        return []
+        return reset_json_file(REMINDERS_FILE, [])
     try:
-        with open(REMINDERS_FILE, "r") as file:
+        with open(REMINDERS_FILE, "r", encoding="utf-8") as file:
             return normalize_reminders(json.load(file))
     except (json.JSONDecodeError, OSError):
-        with open(REMINDERS_FILE, "w") as file:
-            json.dump([], file, indent=2)
-        return []
+        return reset_json_file(REMINDERS_FILE, [])
 
 
 reminders = load_reminders()
@@ -295,16 +316,12 @@ def normalize_modlog(raw: Any) -> dict[str, list[dict[str, Any]]]:
 
 def load_modlog() -> dict[str, list[dict[str, Any]]]:
     if not os.path.exists(MOD_LOG_FILE):
-        with open(MOD_LOG_FILE, "w") as file:
-            json.dump({}, file, indent=2)
-        return {}
+        return reset_json_file(MOD_LOG_FILE, {})
     try:
-        with open(MOD_LOG_FILE, "r") as file:
+        with open(MOD_LOG_FILE, "r", encoding="utf-8") as file:
             return normalize_modlog(json.load(file))
     except (json.JSONDecodeError, OSError):
-        with open(MOD_LOG_FILE, "w") as file:
-            json.dump({}, file, indent=2)
-        return {}
+        return reset_json_file(MOD_LOG_FILE, {})
 
 
 modlog = load_modlog()
@@ -314,13 +331,17 @@ guard_last_trigger: dict[int, datetime] = {}
 
 def save_reminders() -> None:
     reminders.sort(key=lambda reminder: reminder["due_at"])
-    with open(REMINDERS_FILE, "w") as file:
-        json.dump(reminders, file, indent=2)
+    try:
+        write_json_atomic(REMINDERS_FILE, reminders)
+    except OSError as exc:
+        print(f"[FILE] Failed saving reminders: {exc}")
 
 
 def save_modlog() -> None:
-    with open(MOD_LOG_FILE, "w") as file:
-        json.dump(modlog, file, indent=2)
+    try:
+        write_json_atomic(MOD_LOG_FILE, modlog)
+    except OSError as exc:
+        print(f"[FILE] Failed saving mod log: {exc}")
 
 
 def get_next_case_id(guild_id: int) -> int:
@@ -581,9 +602,10 @@ async def send_backend_user_update(
         return
 
     if response.status_code != 200:
+        response_excerpt = clamp_text(response.text, 800)
         await ctx.send(
             f"⚠️ Request failed for <@{user_id}>. "
-            f"Status: {response.status_code}. Response: ```{response.text}```"
+            f"Status: {response.status_code}. Response: ```{response_excerpt}```"
         )
         return
 
@@ -597,9 +619,9 @@ async def send_backend_user_update(
 
     backend_msg = ""
     try:
-        backend_msg = response.json().get("message", "")
+        backend_msg = clamp_text(response.json().get("message", ""), 800)
     except Exception:
-        backend_msg = response.text
+        backend_msg = clamp_text(response.text, 800)
 
     await ctx.send(f"✅ {mention} {success_text}. `{backend_msg}`")
 
@@ -655,7 +677,7 @@ async def set_lockdown_state(ctx: commands.Context, locked: bool) -> None:
     target_role_id = guild_cfg.get("lockdown_role_id")
     target_role = resolve_role(guild, target_role_id) if target_role_id else guild.default_role
     if target_role is None:
-        await ctx.send("⚠️ Configured lockdown role no longer exists. Set it again with `!setlockdownrole`.")
+        await ctx.send("⚠️ Configured lockdown role no longer exists. Set it again with `/setlockdownrole`.")
         return
 
     updated = 0
@@ -744,6 +766,15 @@ async def dispatch_due_reminders() -> None:
                 pass
 
 
+async def send_chunked_message(ctx: commands.Context, text: str, chunk_size: int = MAX_DISCORD_MESSAGE_CHARS) -> None:
+    payload = str(text)
+    if len(payload) <= chunk_size:
+        await ctx.send(payload)
+        return
+    for index in range(0, len(payload), chunk_size):
+        await ctx.send(payload[index : index + chunk_size])
+
+
 async def reminder_worker() -> None:
     while not bot.is_closed():
         try:
@@ -780,7 +811,10 @@ async def global_owner_check(ctx: commands.Context) -> bool:
 @bot.event
 async def on_ready():
     global startup_initialized, reminder_loop_task
-    print(f"[READY] Logged in as {bot.user} ({bot.user.id}) in {len(bot.guilds)} guild(s)")
+    if bot.user is not None:
+        print(f"[READY] Logged in as {bot.user} ({bot.user.id}) in {len(bot.guilds)} guild(s)")
+    else:
+        print(f"[READY] Logged in. Guild count: {len(bot.guilds)}")
 
     if startup_initialized:
         return
@@ -949,6 +983,36 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     await ctx.send("❌ Unexpected error while running that command.")
 
 
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    err = getattr(error, "original", error)
+    message = "❌ Unexpected error while running that command."
+
+    if isinstance(error, app_commands.MissingPermissions):
+        missing = ", ".join(error.missing_permissions)
+        message = f"⛔ Missing required permissions: `{missing}`."
+    elif isinstance(error, app_commands.BotMissingPermissions):
+        missing = ", ".join(error.missing_permissions)
+        message = f"⛔ I am missing permissions: `{missing}`."
+    elif isinstance(error, app_commands.CommandOnCooldown):
+        message = f"⏳ Slow down. Try again in `{error.retry_after:.1f}` seconds."
+    elif isinstance(error, app_commands.CheckFailure):
+        message = "⛔ You do not have permission to run this command."
+    elif isinstance(error, app_commands.TransformerError):
+        message = "⚠️ Invalid argument. Check the command format and try again."
+    elif isinstance(err, commands.NotOwner):
+        message = "⛔ This command is owner-only."
+
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+    except Exception:
+        print("[ERROR] Unhandled app command error:")
+        traceback.print_exception(type(error), error, error.__traceback__)
+
+
 @bot.hybrid_command(name="help")
 async def help_command(ctx: commands.Context, *, command_name: str | None = None):
     """Show help for all commands or a specific command."""
@@ -983,7 +1047,7 @@ async def help_command(ctx: commands.Context, *, command_name: str | None = None
     )
     embed.add_field(
         name="Community",
-        value="`rules` `mcstatus` `poll` `choose` `roll` `remindme` `reminders` `cancelreminder`",
+        value="`rules` `mcstatus` `poll` `choose` `roll` `remindme` `reminders` `cancelreminder` `startvote`",
         inline=False,
     )
     embed.add_field(
@@ -1352,6 +1416,11 @@ async def remindme(ctx: commands.Context, duration: str, *, message: str):
         await ctx.send("⚠️ Maximum reminder duration is 30 days.")
         return
 
+    clean_message = message.strip()
+    if not clean_message:
+        await ctx.send("⚠️ Reminder message cannot be empty.")
+        return
+
     reminder_id = create_reminder_id()
     due_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
     reminders.append(
@@ -1360,7 +1429,7 @@ async def remindme(ctx: commands.Context, duration: str, *, message: str):
             "user_id": ctx.author.id,
             "channel_id": ctx.channel.id,
             "guild_id": ctx.guild.id if ctx.guild else None,
-            "message": message.strip()[:300],
+            "message": clean_message[:300],
             "due_at": due_at.isoformat(),
         }
     )
@@ -1387,7 +1456,7 @@ async def list_reminders(ctx: commands.Context):
         lines.append(
             f"`{reminder['id']}` • in `{format_duration(remaining_seconds)}` • {reminder['message']}"
         )
-    await ctx.send("**Your reminders:**\n" + "\n".join(lines))
+    await send_chunked_message(ctx, "**Your reminders:**\n" + "\n".join(lines))
 
 
 @bot.hybrid_command(name="cancelreminder", aliases=["delreminder"])
@@ -1417,20 +1486,32 @@ async def purge(ctx: commands.Context, amount: int):
     if amount < 1 or amount > 200:
         await ctx.send("⚠️ Amount must be between 1 and 200.")
         return
-    deleted = await ctx.channel.purge(limit=amount + 1)
+
+    include_invocation = ctx.interaction is None
+    purge_limit = amount + (1 if include_invocation else 0)
+    try:
+        deleted = await ctx.channel.purge(limit=purge_limit)
+    except discord.Forbidden:
+        await ctx.send("⛔ I do not have permission to delete messages in this channel.")
+        return
+    except discord.HTTPException as exc:
+        await ctx.send(f"❌ Failed to purge messages: {exc}")
+        return
+
+    deleted_count = max(len(deleted) - (1 if include_invocation else 0), 0)
     case_id = log_moderation_action(
         guild_id=ctx.guild.id,
         action="purge",
         actor_id=ctx.author.id,
-        reason=f"Purged {max(len(deleted) - 1, 0)} messages",
+        reason=f"Purged {deleted_count} messages",
         details=f"channel_id={ctx.channel.id}",
         undoable=False,
     )
     await send_ops_log(
         ctx.guild,
-        f"📘 Case `{case_id}` {ctx.author.mention} purged `{max(len(deleted) - 1, 0)}` messages in {ctx.channel.mention}.",
+        f"📘 Case `{case_id}` {ctx.author.mention} purged `{deleted_count}` messages in {ctx.channel.mention}.",
     )
-    confirmation = await ctx.send(f"🧹 Deleted `{max(len(deleted) - 1, 0)}` messages.")
+    confirmation = await ctx.send(f"🧹 Deleted `{deleted_count}` messages.")
     await asyncio.sleep(4)
     try:
         await confirmation.delete()
@@ -1471,18 +1552,29 @@ async def slowmode(ctx: commands.Context, seconds: int):
 @commands.has_permissions(manage_nicknames=True)
 async def nick(ctx: commands.Context, member: discord.Member, *, nickname: str | None = None):
     """Change or clear a member nickname."""
-    if ctx.guild is None or not isinstance(ctx.author, discord.Member):
+    if ctx.guild is None:
         await ctx.send("⚠️ This command can only be used in a server.")
+        return
+    actor = await resolve_context_member(ctx, ctx.guild)
+    if actor is None:
+        await ctx.send("⚠️ Unable to verify your server membership. Try again in this server.")
         return
     bot_member = get_bot_member(ctx.guild)
     if bot_member is None or bot_member.top_role <= member.top_role:
         await ctx.send("⛔ I cannot edit that member's nickname.")
         return
-    if not can_manage_target(ctx.author, member):
+    if not can_manage_target(actor, member):
         await ctx.send("⛔ You cannot edit that member's nickname.")
         return
     old_nickname = member.nick
-    await member.edit(nick=nickname[:32] if nickname else None, reason=f"Requested by {ctx.author}")
+    try:
+        await member.edit(nick=nickname[:32] if nickname else None, reason=f"Requested by {actor}")
+    except discord.Forbidden:
+        await ctx.send("⛔ I cannot edit that member's nickname.")
+        return
+    except discord.HTTPException as exc:
+        await ctx.send(f"❌ Failed to update nickname: {exc}")
+        return
     case_id = log_moderation_action(
         guild_id=ctx.guild.id,
         action="nick",
@@ -1506,10 +1598,14 @@ async def nick(ctx: commands.Context, member: discord.Member, *, nickname: str |
 @commands.has_permissions(moderate_members=True)
 async def timeout(ctx: commands.Context, member: discord.Member, duration: str, *, reason: str | None = None):
     """Timeout a member. Example: !timeout @user 30m spam"""
-    if ctx.guild is None or not isinstance(ctx.author, discord.Member):
+    if ctx.guild is None:
         await ctx.send("⚠️ This command can only be used in a server.")
         return
-    if member.id == ctx.author.id:
+    actor = await resolve_context_member(ctx, ctx.guild)
+    if actor is None:
+        await ctx.send("⚠️ Unable to verify your server membership. Try again in this server.")
+        return
+    if member.id == actor.id:
         await ctx.send("⚠️ You cannot timeout yourself.")
         return
     seconds = parse_duration_to_seconds(duration)
@@ -1524,12 +1620,19 @@ async def timeout(ctx: commands.Context, member: discord.Member, duration: str, 
     if bot_member is None or bot_member.top_role <= member.top_role:
         await ctx.send("⛔ I cannot timeout that member.")
         return
-    if not can_manage_target(ctx.author, member):
+    if not can_manage_target(actor, member):
         await ctx.send("⛔ You cannot timeout that member.")
         return
 
     until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
-    await member.timeout(until, reason=reason or f"Timed out by {ctx.author}")
+    try:
+        await member.timeout(until, reason=reason or f"Timed out by {actor}")
+    except discord.Forbidden:
+        await ctx.send("⛔ I cannot timeout that member.")
+        return
+    except discord.HTTPException as exc:
+        await ctx.send(f"❌ Failed to apply timeout: {exc}")
+        return
     case_id = log_moderation_action(
         guild_id=ctx.guild.id,
         action="timeout",
@@ -1553,18 +1656,29 @@ async def timeout(ctx: commands.Context, member: discord.Member, duration: str, 
 @commands.has_permissions(moderate_members=True)
 async def untimeout(ctx: commands.Context, member: discord.Member, *, reason: str | None = None):
     """Remove a member timeout."""
-    if ctx.guild is None or not isinstance(ctx.author, discord.Member):
+    if ctx.guild is None:
         await ctx.send("⚠️ This command can only be used in a server.")
+        return
+    actor = await resolve_context_member(ctx, ctx.guild)
+    if actor is None:
+        await ctx.send("⚠️ Unable to verify your server membership. Try again in this server.")
         return
     bot_member = get_bot_member(ctx.guild)
     if bot_member is None or bot_member.top_role <= member.top_role:
         await ctx.send("⛔ I cannot modify that member.")
         return
-    if not can_manage_target(ctx.author, member):
+    if not can_manage_target(actor, member):
         await ctx.send("⛔ You cannot modify that member.")
         return
 
-    await member.timeout(None, reason=reason or f"Timeout removed by {ctx.author}")
+    try:
+        await member.timeout(None, reason=reason or f"Timeout removed by {actor}")
+    except discord.Forbidden:
+        await ctx.send("⛔ I cannot modify that member.")
+        return
+    except discord.HTTPException as exc:
+        await ctx.send(f"❌ Failed to remove timeout: {exc}")
+        return
     case_id = log_moderation_action(
         guild_id=ctx.guild.id,
         action="untimeout",
@@ -1585,10 +1699,14 @@ async def untimeout(ctx: commands.Context, member: discord.Member, *, reason: st
 @commands.has_permissions(moderate_members=True)
 async def warn(ctx: commands.Context, member: discord.Member, *, reason: str):
     """Issue a warning and record a moderation case."""
-    if ctx.guild is None or not isinstance(ctx.author, discord.Member):
+    if ctx.guild is None:
         await ctx.send("⚠️ This command can only be used in a server.")
         return
-    if not can_manage_target(ctx.author, member):
+    actor = await resolve_context_member(ctx, ctx.guild)
+    if actor is None:
+        await ctx.send("⚠️ Unable to verify your server membership. Try again in this server.")
+        return
+    if not can_manage_target(actor, member):
         await ctx.send("⛔ You cannot warn that member.")
         return
     case_id = log_moderation_action(
@@ -1630,7 +1748,7 @@ async def cases(ctx: commands.Context, member: discord.Member | None = None, lim
             f"`{entry.get('case_id')}` {entry.get('action')} • target: {target_text} • "
             f"by <@{entry.get('actor_id')}> • {when}"
         )
-    await ctx.send("**Moderation cases:**\n" + "\n".join(lines))
+    await send_chunked_message(ctx, "**Moderation cases:**\n" + "\n".join(lines))
 
 
 @bot.hybrid_command(name="undo")
@@ -1661,13 +1779,25 @@ async def undo(ctx: commands.Context, case_id: int):
         if action == "timeout" and target:
             await target.timeout(None, reason=f"Undo case {case_id} by {ctx.author}")
         elif action == "nick" and target:
-            payload = json.loads(details) if details else {}
+            payload = {}
+            if details:
+                try:
+                    payload = json.loads(details)
+                except json.JSONDecodeError:
+                    payload = {}
             old_nick = payload.get("old_nick")
             await target.edit(nick=old_nick, reason=f"Undo case {case_id} by {ctx.author}")
         elif action == "slowmode":
-            payload = json.loads(details) if details else {}
+            payload = {}
+            if details:
+                try:
+                    payload = json.loads(details)
+                except json.JSONDecodeError:
+                    payload = {}
             channel_id = payload.get("channel_id")
-            old_slowmode = int(payload.get("old_slowmode", 0))
+            old_slowmode = as_int(payload.get("old_slowmode"))
+            if old_slowmode is None or not 0 <= old_slowmode <= 21600:
+                old_slowmode = 0
             channel = ctx.guild.get_channel(channel_id) if channel_id else None
             if isinstance(channel, discord.TextChannel):
                 await channel.edit(slowmode_delay=old_slowmode)
@@ -1719,15 +1849,22 @@ async def vanguard(ctx: commands.Context, *, question: str):
                 timeout=20,
             )
             if response.status_code == 200:
-                data = response.json()
-                answer = data.get("answer", "No response from the AI service.")
+                try:
+                    data = response.json()
+                except ValueError:
+                    data = {}
+                answer = str(data.get("answer") or "").strip() or "No response from the AI service."
             else:
-                title_text = "AI service returned an error."
+                title_text = f"AI service returned HTTP {response.status_code}."
+                answer = response.text
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
             title_text = "AI service is currently unreachable."
         except Exception:
             title_text = "Unexpected error while contacting the AI service."
 
+    answer = clamp_text(answer, MAX_DISCORD_EMBED_DESCRIPTION_CHARS)
+    if not answer:
+        answer = "No additional details."
     embed = discord.Embed(title=title_text, description=answer, color=discord.Color.red())
     embed.set_footer(text="Powered by Vanguard AI")
     await ctx.send(embed=embed)
@@ -1750,7 +1887,7 @@ async def unflaguser(ctx: commands.Context, target: str):
 @bot.hybrid_command()
 @commands.is_owner()
 async def owneronly(ctx: commands.Context, state: str | None = None):
-    """Owner-only: toggle global owner-only mode. Usage: !owneronly on|off"""
+    """Owner-only: toggle global owner-only mode. Usage: /owneronly on|off"""
     if state is None:
         status = "ON" if settings.get("owner_only", False) else "OFF"
         await ctx.send(f"Owner-only mode is currently `{status}`.")
@@ -1762,7 +1899,7 @@ async def owneronly(ctx: commands.Context, state: str | None = None):
     elif normalized in {"off", "disable", "disabled", "false"}:
         settings["owner_only"] = False
     else:
-        await ctx.send("⚠️ Use `!owneronly on` or `!owneronly off`.")
+        await ctx.send("⚠️ Use `/owneronly on` or `/owneronly off`.")
         return
 
     save_settings()
@@ -1842,7 +1979,7 @@ async def mcstatus(ctx: commands.Context):
 
     server = JavaServer.lookup(f"{host}:{port}")
     try:
-        status = server.status()
+        status = await asyncio.to_thread(server.status)
         await ctx.send(
             f"✅ Minecraft server `{host}:{port}` is online. "
             f"Players: {status.players.online}/{status.players.max}"
@@ -2000,7 +2137,11 @@ async def setmcserver(ctx: commands.Context, host: str, port: int = 25565):
     if not 1 <= port <= 65535:
         await ctx.send("⚠️ Port must be between 1 and 65535.")
         return
-    guild_cfg["mc_host"] = host.strip()
+    normalized_host = host.strip()
+    if not normalized_host:
+        await ctx.send("⚠️ Host cannot be empty.")
+        return
+    guild_cfg["mc_host"] = normalized_host
     guild_cfg["mc_port"] = port
     save_settings()
     await ctx.send(f"✅ Minecraft server set to `{guild_cfg['mc_host']}:{guild_cfg['mc_port']}`.")
@@ -2118,7 +2259,7 @@ async def voteinfo(ctx: commands.Context, vote_id: str):
     if not lines:
         await ctx.send("No votes yet.")
     else:
-        await ctx.send("**Vote results so far:**\n" + "\n".join(lines))
+        await send_chunked_message(ctx, "**Vote results so far:**\n" + "\n".join(lines))
 
 
 @bot.hybrid_command(name="activevotes")
@@ -2148,7 +2289,7 @@ async def activevotes(ctx: commands.Context):
             f"`{vote_id}`\nTarget: <@{vote.get('target_id', 'unknown')}> • "
             f"Against: {against_count} • Support: {support_count} • Ends: {finish_text}"
         )
-    await ctx.send("**Active votes:**\n" + "\n\n".join(lines))
+    await send_chunked_message(ctx, "**Active votes:**\n" + "\n\n".join(lines))
 
 
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")

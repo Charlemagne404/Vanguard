@@ -9,20 +9,112 @@ from datetime import datetime, timedelta, timezone
 DATA_FILE = 'votes.json'
 ACTIVE_VIEWS = {}  # vote_id -> VoteView instance (for cancelling countdowns)
 
-if os.path.exists(DATA_FILE):
+def _as_int(value, default=None):
     try:
-        with open(DATA_FILE, 'r') as f:
-            votes = json.load(f)
-        if not isinstance(votes, dict):
-            votes = {}
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _write_votes_atomic(payload):
+    temp_path = f"{DATA_FILE}.tmp"
+    with open(temp_path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    os.replace(temp_path, DATA_FILE)
+
+
+def _normalize_vote(vote_id, payload):
+    if not isinstance(payload, dict):
+        return None
+    finish_time = _get_vote_finish_time(vote_id, payload)
+    if finish_time is None:
+        return None
+
+    channel_id = _as_int(payload.get("channel_id"))
+    message_id = _as_int(payload.get("message_id"))
+    starter_id = _as_int(payload.get("starter_id"))
+    target_id = _as_int(payload.get("target_id"))
+    if channel_id is None or message_id is None or starter_id is None or target_id is None:
+        return None
+
+    votes_map = payload.get("votes", {})
+    if not isinstance(votes_map, dict):
+        votes_map = {}
+
+    clean_votes = {}
+    for user_id, choice in votes_map.items():
+        user_key = _as_int(user_id)
+        if user_key is None:
+            continue
+        if choice not in {"against", "support"}:
+            continue
+        clean_votes[str(user_key)] = choice
+
+    duration_hours = _as_int(payload.get("duration_hours"), 24)
+    if duration_hours is None:
+        duration_hours = 24
+    duration_hours = max(1, min(168, duration_hours))
+
+    min_account_days = _as_int(payload.get("min_account_days"), 7)
+    min_join_days = _as_int(payload.get("min_join_days"), 1)
+    if min_account_days is None:
+        min_account_days = 7
+    if min_join_days is None:
+        min_join_days = 1
+    min_account_days = max(0, min_account_days)
+    min_join_days = max(0, min_join_days)
+
+    target_name = str(payload.get("target_name") or f"User {target_id}")[:100]
+
+    return {
+        "id": vote_id,
+        "starter_id": starter_id,
+        "target_id": target_id,
+        "target_name": target_name,
+        "channel_id": channel_id,
+        "message_id": message_id,
+        "votes": clean_votes,
+        "duration_hours": duration_hours,
+        "finish_at": finish_time.isoformat(),
+        "min_account_days": min_account_days,
+        "min_join_days": min_join_days,
+    }
+
+
+def _load_votes():
+    if not os.path.exists(DATA_FILE):
+        try:
+            _write_votes_atomic({})
+        except OSError:
+            pass
+        return {}
+
+    try:
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            raw_votes = json.load(f)
     except (json.JSONDecodeError, OSError):
-        votes = {}
-else:
-    votes = {}
+        try:
+            _write_votes_atomic({})
+        except OSError:
+            pass
+        return {}
+
+    if not isinstance(raw_votes, dict):
+        return {}
+
+    normalized = {}
+    for vote_id, payload in raw_votes.items():
+        clean = _normalize_vote(str(vote_id), payload)
+        if clean is not None:
+            normalized[str(vote_id)] = clean
+    return normalized
+
 
 def save_votes():
-    with open(DATA_FILE, 'w') as f:
-        json.dump(votes, f, indent=2)
+    try:
+        _write_votes_atomic(votes)
+    except OSError as exc:
+        print("Failed to save votes:", exc)
 
 
 def _parse_datetime_utc(value):
@@ -57,6 +149,9 @@ def _get_vote_finish_time(vote_id, vote):
         return None
     return datetime.fromtimestamp(started_ts, tz=timezone.utc) + timedelta(hours=duration_hours)
 
+
+votes = _load_votes()
+
 class VoteView(discord.ui.View):
     def __init__(self, vote_id, finish_time, bot):
         super().__init__(timeout=None)
@@ -85,14 +180,21 @@ class VoteView(discord.ui.View):
         # Fraud protection
         account_age = (now - member.created_at).days
         join_age = (now - member.joined_at).days if getattr(member, "joined_at", None) else 0
-        min_account_days = vote.get("min_account_days", 7)
-        min_join_days = vote.get("min_join_days", 1)
+        min_account_days = _as_int(vote.get("min_account_days"), 7)
+        min_join_days = _as_int(vote.get("min_join_days"), 1)
+        if min_account_days is None:
+            min_account_days = 7
+        if min_join_days is None:
+            min_join_days = 1
+        min_account_days = max(0, min_account_days)
+        min_join_days = max(0, min_join_days)
         if account_age < min_account_days:
             return await interaction.response.send_message(f"⚠️ Your account is too new ({account_age}d) to vote.", ephemeral=True)
         if join_age < min_join_days:
             return await interaction.response.send_message(f"⚠️ You joined too recently ({join_age}d) to vote.", ephemeral=True)
 
         # Record or change vote
+        vote.setdefault("votes", {})
         prev = vote["votes"].get(str(member.id))
         vote["votes"][str(member.id)] = choice
         votes[self.vote_id] = vote
@@ -107,19 +209,26 @@ class VoteView(discord.ui.View):
             await interaction.response.send_message(f"🔁 Changed vote from {prev} to {choice}.", ephemeral=True)
 
         # Update embed counts immediately
-        channel = interaction.channel or self.bot.get_channel(vote["channel_id"])
+        channel_id = _as_int(vote.get("channel_id"))
+        channel = interaction.channel or (self.bot.get_channel(channel_id) if channel_id else None)
         if channel:
             await self.update_message(channel, vote)
 
     async def update_message(self, channel, vote):
         if channel is None:
             return
+        message_id = _as_int(vote.get("message_id"))
+        if message_id is None:
+            return
         try:
-            msg = await channel.fetch_message(vote["message_id"])
+            msg = await channel.fetch_message(message_id)
         except Exception:
             return
-        against_count = sum(1 for v in vote["votes"].values() if v == "against")
-        support_count = sum(1 for v in vote["votes"].values() if v == "support")
+        vote_map = vote.get("votes", {})
+        if not isinstance(vote_map, dict):
+            vote_map = {}
+        against_count = sum(1 for v in vote_map.values() if v == "against")
+        support_count = sum(1 for v in vote_map.values() if v == "support")
         remaining = int((self.finish_time - datetime.now(timezone.utc)).total_seconds())
         if remaining < 0:
             remaining = 0
@@ -129,7 +238,7 @@ class VoteView(discord.ui.View):
 
         embed = discord.Embed(
             title="🚨 EMERGENCY VOTE: NO CONFIDENCE 🚨",
-            description=f"A server-wide vote has been started against **{vote['target_name']}**.\nThis is important — please vote responsibly.",
+            description=f"A server-wide vote has been started against **{vote.get('target_name', 'unknown')}**.\nThis is important — please vote responsibly.",
             color=discord.Color.red()
         )
         embed.add_field(name="Against", value=str(against_count), inline=True)
@@ -155,7 +264,8 @@ class VoteView(discord.ui.View):
                 if datetime.now(timezone.utc) >= self.finish_time:
                     # ensure final update before finish_vote runs
                     try:
-                        ch = self.bot.get_channel(vote["channel_id"])
+                        channel_id = _as_int(vote.get("channel_id"))
+                        ch = self.bot.get_channel(channel_id) if channel_id is not None else None
                         if ch:
                             await self.update_message(ch, vote)
                     except Exception:
@@ -163,7 +273,8 @@ class VoteView(discord.ui.View):
                     break
                 # normal update
                 try:
-                    ch = self.bot.get_channel(vote["channel_id"])
+                    channel_id = _as_int(vote.get("channel_id"))
+                    ch = self.bot.get_channel(channel_id) if channel_id is not None else None
                     if ch:
                         await self.update_message(ch, vote)
                 except Exception:
@@ -202,14 +313,23 @@ async def finish_vote(bot, vote_id):
         await view.stop_updater()
 
     try:
-        channel = bot.get_channel(vote["channel_id"])
+        channel_id = _as_int(vote.get("channel_id"))
+        message_id = _as_int(vote.get("message_id"))
+        starter_id = _as_int(vote.get("starter_id"))
+        target_id = _as_int(vote.get("target_id"))
+        channel = bot.get_channel(channel_id) if channel_id is not None else None
         if channel:
-            msg = await channel.fetch_message(vote["message_id"])
-            against_count = sum(1 for v in vote["votes"].values() if v == "against")
-            support_count = sum(1 for v in vote["votes"].values() if v == "support")
+            if message_id is None:
+                raise ValueError("Vote message_id missing")
+            msg = await channel.fetch_message(message_id)
+            vote_map = vote.get("votes", {})
+            if not isinstance(vote_map, dict):
+                vote_map = {}
+            against_count = sum(1 for v in vote_map.values() if v == "against")
+            support_count = sum(1 for v in vote_map.values() if v == "support")
             embed = discord.Embed(
                 title="📣 VOTE CLOSED",
-                description=f"Final result for **{vote['target_name']}**",
+                description=f"Final result for **{vote.get('target_name', 'unknown')}**",
                 color=discord.Color.orange()
             )
             embed.add_field(name="Against", value=str(against_count), inline=True)
@@ -221,16 +341,16 @@ async def finish_vote(bot, vote_id):
             else:
                 result = "Tie"
             embed.add_field(name="Result", value=result, inline=False)
-            embed.set_footer(text=f"Vote ended • Started by <@{vote['starter_id']}>")
+            embed.set_footer(text=f"Vote ended • Started by <@{starter_id}>")
             try:
                 await msg.edit(embed=embed, view=None)
             except Exception:
                 pass
-            await channel.send(f"🔔 **VOTE ENDED** — {result}\nStarter: <@{vote['starter_id']}>, Target: <@{vote['target_id']}>")
+            await channel.send(f"🔔 **VOTE ENDED** — {result}\nStarter: <@{starter_id}>, Target: <@{target_id}>")
             # delete vote channel after 1 hour for cleanliness
             await asyncio.sleep(3600)
             try:
-                ch = bot.get_channel(vote["channel_id"])
+                ch = bot.get_channel(channel_id) if channel_id is not None else None
                 bot_member = None
                 if ch:
                     bot_member = ch.guild.me
@@ -278,7 +398,7 @@ async def restore_vote_state(bot):
             changed = True
 
         if finish_time <= now:
-            bot.loop.create_task(finish_vote(bot, vote_id))
+            asyncio.create_task(finish_vote(bot, vote_id))
             continue
 
         message_id = vote.get("message_id")
@@ -296,13 +416,16 @@ async def restore_vote_state(bot):
             pass
 
         delay_seconds = (finish_time - now).total_seconds()
-        bot.loop.create_task(schedule_finish(bot, vote_id, delay_seconds))
+        asyncio.create_task(schedule_finish(bot, vote_id, delay_seconds))
 
     if changed:
         save_votes()
 
 def setup_vote_module(bot: commands.Bot):
-    @bot.command(name="startvote")
+    @bot.hybrid_command(name="startvote")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    @commands.bot_has_permissions(manage_channels=True, send_messages=True, embed_links=True)
     async def startvote(ctx, target: discord.Member, duration_hours: int = 24):
         """Start a server-wide emergency vote of no confidence."""
         guild = ctx.guild
@@ -375,4 +498,4 @@ def setup_vote_module(bot: commands.Bot):
         await ctx.send(f"📣 Emergency vote started in {vote_channel.mention}. Make your voice heard!")
 
         # schedule finish
-        bot.loop.create_task(schedule_finish(bot, vote_id, duration_hours * 3600))
+        asyncio.create_task(schedule_finish(bot, vote_id, duration_hours * 3600))
