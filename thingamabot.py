@@ -435,6 +435,9 @@ def resolve_role(guild: discord.Guild, role_id: int | None) -> discord.Role | No
 
 
 def has_mod_access(member: discord.Member, guild_cfg: dict[str, Any]) -> bool:
+    if member.guild.owner_id == member.id:
+        return True
+
     perms = member.guild_permissions
     if perms.administrator or perms.manage_guild:
         return True
@@ -610,6 +613,21 @@ async def require_guild_context(
     return ctx.guild, get_guild_config(ctx.guild.id)
 
 
+async def resolve_context_member(
+    ctx: commands.Context,
+    guild: discord.Guild,
+) -> discord.Member | None:
+    if isinstance(ctx.author, discord.Member):
+        return ctx.author
+    member = guild.get_member(ctx.author.id)
+    if member:
+        return member
+    try:
+        return await guild.fetch_member(ctx.author.id)
+    except Exception:
+        return None
+
+
 async def require_mod_context(
     ctx: commands.Context,
 ) -> tuple[discord.Guild, dict[str, Any]] | None:
@@ -618,10 +636,11 @@ async def require_mod_context(
         return None
 
     guild, guild_cfg = result
-    if not isinstance(ctx.author, discord.Member):
-        await ctx.send("⚠️ This command can only be used in a server.")
+    member = await resolve_context_member(ctx, guild)
+    if member is None:
+        await ctx.send("⚠️ Unable to verify your server membership. Try again in this server.")
         return None
-    if not has_mod_access(ctx.author, guild_cfg):
+    if not has_mod_access(member, guild_cfg):
         await ctx.send("⛔ You do not have permission to run this command.")
         return None
     return guild, guild_cfg
@@ -1855,7 +1874,8 @@ async def prefix_command(ctx: commands.Context, new_prefix: str | None = None):
         await ctx.send(f"Current prefix for this server is `{current_prefix}`.")
         return
 
-    if not isinstance(ctx.author, discord.Member) or not has_mod_access(ctx.author, guild_cfg):
+    member = await resolve_context_member(ctx, ctx.guild)
+    if member is None or not has_mod_access(member, guild_cfg):
         await ctx.send("⛔ You do not have permission to change the prefix.")
         return
 
