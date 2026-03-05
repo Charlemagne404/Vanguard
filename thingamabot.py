@@ -46,7 +46,14 @@ TOS_URL = os.getenv("TERMS_OF_SERVICE_URL", "").strip()
 ID_RE = re.compile(r"(\d{17,20})")
 DURATION_TOKEN_RE = re.compile(r"(\d+)([smhdw])")
 
-ConfigChannelInput = discord.abc.GuildChannel | discord.Thread
+ConfigChannelInput = (
+    discord.TextChannel
+    | discord.VoiceChannel
+    | discord.StageChannel
+    | discord.CategoryChannel
+    | discord.ForumChannel
+    | discord.Thread
+)
 
 
 def default_guild_settings() -> dict[str, Any]:
@@ -476,9 +483,12 @@ def is_channel_transform_error(error: Exception) -> bool:
     if not isinstance(error, app_commands.TransformerError):
         return False
     option_type = getattr(error, "type", None)
-    option_enum = getattr(discord, "AppCommandOptionType", None)
-    channel_option_type = getattr(option_enum, "channel", None) if option_enum is not None else None
-    return option_type == channel_option_type
+    if option_type is None:
+        return False
+    option_name = getattr(option_type, "name", None)
+    if isinstance(option_name, str):
+        return option_name.lower() == "channel"
+    return str(option_type).lower().endswith("channel")
 
 
 def has_elevated_permissions(perms: discord.Permissions | None) -> bool:
