@@ -25,7 +25,13 @@ except ImportError:
         return False
 
 from data_paths import resolve_data_file
-from guard import handle_guard_message, setup_guard_module
+from guard import (
+    guard_default_settings,
+    handle_guard_member_join,
+    handle_guard_message,
+    normalize_guard_settings,
+    setup_guard_module,
+)
 from vote import (
     ballot_to_text,
     option_label,
@@ -259,7 +265,7 @@ ConfigChannelInput = discord.TextChannel
 
 
 def default_guild_settings() -> dict[str, Any]:
-    return {
+    guild_cfg: dict[str, Any] = {
         "prefix": None,
         "welcome_channel_id": None,
         "welcome_role_id": None,
@@ -270,12 +276,9 @@ def default_guild_settings() -> dict[str, Any]:
         "mod_role_ids": [],
         "mc_host": None,
         "mc_port": 25565,
-        "guard_enabled": False,
-        "guard_window_seconds": 30,
-        "guard_threshold": 8,
-        "guard_new_account_hours": 24,
-        "guard_slowmode_seconds": 30,
     }
+    guild_cfg.update(guard_default_settings())
+    return guild_cfg
 
 
 def default_settings() -> dict[str, Any]:
@@ -374,30 +377,7 @@ def normalize_settings(raw: Any) -> dict[str, Any]:
         port = as_int(cfg.get("mc_port"))
         guild_cfg["mc_port"] = port if port and 1 <= port <= 65535 else 25565
 
-        guard_enabled = cfg.get("guard_enabled")
-        guild_cfg["guard_enabled"] = bool(guard_enabled)
-
-        guard_window_seconds = as_int(cfg.get("guard_window_seconds"))
-        guild_cfg["guard_window_seconds"] = (
-            guard_window_seconds if guard_window_seconds and 5 <= guard_window_seconds <= 300 else 30
-        )
-
-        guard_threshold = as_int(cfg.get("guard_threshold"))
-        guild_cfg["guard_threshold"] = (
-            guard_threshold if guard_threshold and 3 <= guard_threshold <= 100 else 8
-        )
-
-        guard_new_account_hours = as_int(cfg.get("guard_new_account_hours"))
-        guild_cfg["guard_new_account_hours"] = (
-            guard_new_account_hours if guard_new_account_hours and 1 <= guard_new_account_hours <= 168 else 24
-        )
-
-        guard_slowmode_seconds = as_int(cfg.get("guard_slowmode_seconds"))
-        guild_cfg["guard_slowmode_seconds"] = (
-            guard_slowmode_seconds
-            if guard_slowmode_seconds is not None and 0 <= guard_slowmode_seconds <= 21600
-            else 30
-        )
+        guild_cfg.update(normalize_guard_settings(cfg))
 
         guilds[str(guild_id)] = guild_cfg
 
@@ -1329,6 +1309,14 @@ async def on_guild_join(guild: discord.Guild):
 @bot.event
 async def on_member_join(member: discord.Member):
     guild_cfg = get_guild_config(member.guild.id)
+    await handle_guard_member_join(
+        bot=bot,
+        member=member,
+        guild_cfg=guild_cfg,
+        log_moderation_action=log_moderation_action,
+        send_ops_log=send_ops_log,
+    )
+
     channel = resolve_welcome_channel(member.guild, guild_cfg.get("welcome_channel_id"))
     if channel is None:
         return
@@ -1509,7 +1497,7 @@ async def help_command(ctx: commands.Context, *, command_name: str | None = None
         name="Moderation",
         value=(
             "`lockdown` `unlock` `purge` `slowmode` `nick` `timeout` `untimeout` "
-            "`guard` `warn` `cases` `undo`"
+            "`guard` `guardadvanced` `guardstatus` `guardreset` `warn` `cases` `undo`"
         ),
         inline=False,
     )
@@ -2758,6 +2746,7 @@ async def showconfig(ctx: commands.Context):
     else:
         host = MC_DEFAULT_HOST
         port = MC_DEFAULT_PORT
+    guard_cfg = normalize_guard_settings(guild_cfg)
 
     embed = discord.Embed(title="Server Bot Configuration", color=discord.Color.red())
     embed.add_field(name="Commands", value="Slash-only (`/`)", inline=False)
@@ -2800,9 +2789,10 @@ async def showconfig(ctx: commands.Context):
     embed.add_field(
         name="Guard",
         value=(
-            f"enabled={guild_cfg.get('guard_enabled', False)}, "
-            f"threshold={guild_cfg.get('guard_threshold', 8)}, "
-            f"window={guild_cfg.get('guard_window_seconds', 30)}s"
+            f"enabled={guard_cfg['guard_enabled']}, "
+            f"threshold={guard_cfg['guard_threshold']}/{guard_cfg['guard_window_seconds']}s, "
+            f"cooldown={guard_cfg['guard_cooldown_seconds']}s, "
+            f"scope={guard_cfg['guard_slowmode_scope']}"
         ),
         inline=False,
     )

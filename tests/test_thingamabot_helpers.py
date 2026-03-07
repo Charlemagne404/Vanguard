@@ -6,7 +6,7 @@ from pathlib import Path
 def load_thingamabot(monkeypatch, tmp_path):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("VANGUARD_DATA_DIR", str(data_dir))
-    for module_name in ("thingamabot", "vote", "data_paths"):
+    for module_name in ("thingamabot", "guard", "vote", "data_paths"):
         sys.modules.pop(module_name, None)
     module = importlib.import_module("thingamabot")
     return module, data_dir
@@ -37,6 +37,13 @@ def test_normalize_settings_clamps_values(monkeypatch, tmp_path):
                 "guard_window_seconds": 2,
                 "guard_new_account_hours": 0,
                 "guard_slowmode_seconds": 99999,
+                "guard_cooldown_seconds": 2,
+                "guard_slowmode_scope": "invalid",
+                "guard_max_slowmode_channels": 999,
+                "guard_timeout_seconds": -1,
+                "guard_join_threshold": 1,
+                "guard_join_window_seconds": 1,
+                "guard_duplicate_min_chars": 1,
             }
         },
     }
@@ -53,6 +60,27 @@ def test_normalize_settings_clamps_values(monkeypatch, tmp_path):
     assert cfg["guard_window_seconds"] == 30
     assert cfg["guard_new_account_hours"] == 24
     assert cfg["guard_slowmode_seconds"] == 30
+    assert cfg["guard_cooldown_seconds"] == 300
+    assert cfg["guard_slowmode_scope"] == "trigger"
+    assert cfg["guard_max_slowmode_channels"] == 3
+    assert cfg["guard_timeout_seconds"] == 0
+    assert cfg["guard_join_threshold"] == 6
+    assert cfg["guard_join_window_seconds"] == 45
+    assert cfg["guard_duplicate_min_chars"] == 12
+
+
+def test_guard_preset_application(monkeypatch, tmp_path):
+    bot, _ = load_thingamabot(monkeypatch, tmp_path)
+    guard = importlib.import_module("guard")
+
+    cfg = bot.default_guild_settings()
+    ok = guard.apply_guard_preset(cfg, "strict")
+
+    assert ok is True
+    assert cfg["guard_enabled"] is True
+    assert cfg["guard_threshold"] == 6
+    assert cfg["guard_window_seconds"] == 20
+    assert cfg["guard_detect_duplicates"] is True
 
 
 def test_runtime_files_live_in_data_dir(monkeypatch, tmp_path):
