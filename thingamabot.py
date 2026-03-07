@@ -1306,14 +1306,12 @@ async def on_ready():
     except Exception as exc:
         print(f"[SYNC] Global slash command sync failed: {exc}")
 
-    # Mirror global commands into each guild for immediate availability.
-    # Discord global propagation can take time; guild sync applies instantly.
+    # Remove guild-scoped command copies so only global commands remain.
     for guild in bot.guilds:
         try:
             bot.tree.clear_commands(guild=guild)
-            bot.tree.copy_global_to(guild=guild)
-            synced_guild = await bot.tree.sync(guild=guild)
-            print(f"[SYNC] Guild {guild.id} synced {len(synced_guild)} guild command(s) from global")
+            await bot.tree.sync(guild=guild)
+            print(f"[SYNC] Guild {guild.id} cleared stale guild-scoped commands")
         except Exception as exc:
             print(f"[SYNC] Guild {guild.id} sync failed: {exc}")
 
