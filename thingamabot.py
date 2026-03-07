@@ -255,19 +255,7 @@ TOS_URL = os.getenv("TERMS_OF_SERVICE_URL", "").strip()
 ID_RE = re.compile(r"(\d{17,20})")
 DURATION_TOKEN_RE = re.compile(r"(\d+)([smhdw])")
 
-AppCommandChannelType = getattr(app_commands, "AppCommandChannel", discord.TextChannel)
-AppCommandThreadType = getattr(app_commands, "AppCommandThread", discord.Thread)
-
-ConfigChannelInput = (
-    discord.TextChannel
-    | discord.VoiceChannel
-    | discord.StageChannel
-    | discord.CategoryChannel
-    | discord.ForumChannel
-    | discord.Thread
-    | AppCommandChannelType
-    | AppCommandThreadType
-)
+ConfigChannelInput = discord.TextChannel
 
 
 def default_guild_settings() -> dict[str, Any]:
@@ -690,11 +678,6 @@ def ensure_text_channel(channel: ConfigChannelInput | None) -> ConfigChannelInpu
     if channel is None:
         return None
     if isinstance(channel, discord.TextChannel):
-        return channel
-    channel_type = getattr(channel, "type", None)
-    channel_type_name = str(getattr(channel_type, "name", channel_type)).lower()
-    channel_id = as_int(getattr(channel, "id", None))
-    if channel_id is not None and channel_type_name in {"text", "news"}:
         return channel
     return None
 
