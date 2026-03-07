@@ -2,7 +2,7 @@
 # Licensed under the Vanguard Proprietary Source-Available License (see /LICENSE).
 
 import asyncio
-from collections import defaultdict, deque
+from collections import defaultdict
 import json
 import os
 import platform
@@ -25,6 +25,7 @@ except ImportError:
         return False
 
 from data_paths import resolve_data_file
+from guard import handle_guard_message, setup_guard_module
 from vote import (
     ballot_to_text,
     option_label,
@@ -245,7 +246,6 @@ REMINDER_CHECK_SECONDS = 15
 MAX_REMINDER_SECONDS = 60 * 60 * 24 * 30
 MAX_TIMEOUT_SECONDS = 60 * 60 * 24 * 28
 MAX_CASES_PER_GUILD = 1000
-GUARD_COOLDOWN_SECONDS = 300
 MAX_DISCORD_MESSAGE_CHARS = 1900
 MAX_DISCORD_EMBED_DESCRIPTION_CHARS = 3900
 
@@ -538,8 +538,6 @@ def load_modlog() -> dict[str, list[dict[str, Any]]]:
 
 
 modlog = load_modlog()
-message_rate_tracker: dict[int, deque[datetime]] = defaultdict(deque)
-guard_last_trigger: dict[int, datetime] = {}
 
 
 def save_reminders() -> None:
@@ -822,21 +820,6 @@ async def send_ops_log(guild: discord.Guild, message: str) -> None:
             await channel.send(message)
         except Exception:
             pass
-
-
-def count_guard_window(guild_id: int, window_seconds: int, now: datetime) -> int:
-    tracker = message_rate_tracker[guild_id]
-    cutoff = now - timedelta(seconds=window_seconds)
-    while tracker and tracker[0] < cutoff:
-        tracker.popleft()
-    return len(tracker)
-
-
-def should_trigger_guard(guild_id: int, now: datetime) -> bool:
-    last = guard_last_trigger.get(guild_id)
-    if not last:
-        return True
-    return (now - last).total_seconds() >= GUARD_COOLDOWN_SECONDS
 
 
 def get_active_prefix(guild: discord.Guild | None) -> str:
@@ -1249,6 +1232,11 @@ bot = commands.Bot(
     case_insensitive=True,
 )
 setup_vote_module(bot)
+setup_guard_module(
+    bot,
+    require_mod_context=require_mod_context,
+    save_settings=save_settings,
+)
 
 startup_initialized = False
 reminder_loop_task: asyncio.Task | None = None
@@ -1374,61 +1362,14 @@ async def on_message(message: discord.Message):
         return
 
     if isinstance(message.author, discord.Member) and message.guild:
-        guild = message.guild
-        guild_cfg = get_guild_config(guild.id)
-        if guild_cfg.get("guard_enabled", False):
-            now = datetime.now(timezone.utc)
-            new_account_hours = guild_cfg.get("guard_new_account_hours", 24)
-            account_age = now - message.author.created_at.astimezone(timezone.utc)
-            if account_age <= timedelta(hours=new_account_hours):
-                message_rate_tracker[guild.id].append(now)
-                window_seconds = guild_cfg.get("guard_window_seconds", 30)
-                threshold = guild_cfg.get("guard_threshold", 8)
-                current_rate = count_guard_window(guild.id, window_seconds, now)
-                if current_rate >= threshold and should_trigger_guard(guild.id, now):
-                    guard_last_trigger[guild.id] = now
-                    details = (
-                        f"Detected {current_rate} messages from new accounts in "
-                        f"{window_seconds}s window."
-                    )
-                    alert_channel = message.channel
-                    configured_alert = guild.get_channel(guild_cfg.get("ops_channel_id"))
-                    if configured_alert and hasattr(configured_alert, "send"):
-                        alert_channel = configured_alert
-
-                    slowmode_seconds = guild_cfg.get("guard_slowmode_seconds", 30)
-                    if (
-                        isinstance(message.channel, discord.TextChannel)
-                        and slowmode_seconds >= 0
-                    ):
-                        try:
-                            await message.channel.edit(slowmode_delay=slowmode_seconds)
-                        except Exception:
-                            pass
-
-                    alert_text = (
-                        "🚨 **Guard Triggered**\n"
-                        f"{details}\n"
-                        f"Applied slowmode: `{slowmode_seconds}s` in {message.channel.mention}."
-                    )
-                    try:
-                        if hasattr(alert_channel, "send"):
-                            await alert_channel.send(alert_text)
-                    except Exception:
-                        pass
-
-                    case_id = log_moderation_action(
-                        guild_id=guild.id,
-                        action="guard_trigger",
-                        actor_id=bot.user.id if bot.user else 0,
-                        reason="Automated guard defense",
-                        details=details,
-                        undoable=False,
-                    )
-                    await send_ops_log(
-                        guild,
-                        f"🛡️ Case `{case_id}` guard trigger in {message.channel.mention}: {details}",
-                    )
+        guild_cfg = get_guild_config(message.guild.id)
+        await handle_guard_message(
+            bot=bot,
+            message=message,
+            guild_cfg=guild_cfg,
+            log_moderation_action=log_moderation_action,
+            send_ops_log=send_ops_log,
+        )
 
     # Slash commands are handled via interactions; ignore message command parsing.
     return
@@ -1712,43 +1653,6 @@ async def setopschannel(ctx: commands.Context, channel: ConfigChannelInput | Non
         f"✅ Ops channel set to {format_channel_mention(normalized_channel)}."
         if normalized_channel
         else "✅ Ops channel cleared."
-    )
-
-
-@bot.hybrid_command(name="guard")
-async def guard(
-    ctx: commands.Context,
-    enabled: bool | None = None,
-    threshold: int | None = None,
-    window_seconds: int | None = None,
-    slowmode_seconds: int | None = None,
-    new_account_hours: int | None = None,
-):
-    """Configure anti-raid guard thresholds."""
-    result = await require_mod_context(ctx)
-    if not result:
-        return
-    guild, guild_cfg = result
-
-    if enabled is not None:
-        guild_cfg["guard_enabled"] = enabled
-    if threshold is not None:
-        guild_cfg["guard_threshold"] = max(3, min(100, threshold))
-    if window_seconds is not None:
-        guild_cfg["guard_window_seconds"] = max(5, min(300, window_seconds))
-    if slowmode_seconds is not None:
-        guild_cfg["guard_slowmode_seconds"] = max(0, min(21600, slowmode_seconds))
-    if new_account_hours is not None:
-        guild_cfg["guard_new_account_hours"] = max(1, min(168, new_account_hours))
-
-    save_settings()
-    await ctx.send(
-        f"🛡️ Guard for **{guild.name}**\n"
-        f"- Enabled: `{guild_cfg.get('guard_enabled', False)}`\n"
-        f"- Threshold: `{guild_cfg.get('guard_threshold', 8)}`\n"
-        f"- Window: `{guild_cfg.get('guard_window_seconds', 30)}s`\n"
-        f"- New account age: `{guild_cfg.get('guard_new_account_hours', 24)}h`\n"
-        f"- Auto slowmode: `{guild_cfg.get('guard_slowmode_seconds', 30)}s`"
     )
 
 

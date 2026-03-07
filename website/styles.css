@@ -438,6 +438,114 @@ h3 {
   padding: 3px 7px;
 }
 
+.vote-showcase {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 14px;
+}
+
+.vote-flow {
+  display: grid;
+  gap: 10px;
+}
+
+.vote-card {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 144, 144, 0.38);
+  background: linear-gradient(145deg, rgba(25, 0, 3, 0.84), rgba(111, 0, 12, 0.45));
+  padding: 14px;
+}
+
+.vote-step {
+  margin: 0;
+  color: #ffb3b8;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  font-size: 0.71rem;
+  font-weight: 800;
+}
+
+.vote-card h4,
+.vote-demo h4 {
+  margin: 5px 0 6px;
+  font-family: "Anton", sans-serif;
+  letter-spacing: 0.3px;
+}
+
+.vote-card h4 {
+  font-size: 1.2rem;
+}
+
+.vote-card p {
+  margin: 0;
+  color: #ffe1e1;
+  font-size: 0.9rem;
+}
+
+.vote-demo {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 171, 171, 0.52);
+  background: linear-gradient(155deg, rgba(167, 0, 17, 0.48), rgba(14, 0, 2, 0.84));
+  padding: 16px;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.34);
+}
+
+.vote-demo-label {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #ffd4d4;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.vote-demo h4 {
+  font-size: 1.45rem;
+  line-height: 0.95;
+}
+
+.vote-result {
+  margin-top: 11px;
+}
+
+.vote-result-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.87rem;
+  color: #ffe5e5;
+}
+
+.vote-result-top strong {
+  font-size: 0.82rem;
+  letter-spacing: 0.4px;
+}
+
+.vote-bar {
+  margin-top: 5px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 235, 235, 0.16);
+  overflow: hidden;
+}
+
+.vote-bar span {
+  display: block;
+  height: 100%;
+  width: var(--vote-fill, 0%);
+  border-radius: inherit;
+  background: linear-gradient(95deg, #ff4a58, #ffd3d5);
+}
+
+.vote-meta {
+  margin: 14px 0 0;
+  color: #ffd6d6;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
 .cta-box {
   margin-top: 14px;
   border: 1px solid rgba(255, 149, 149, 0.46);
@@ -529,6 +637,10 @@ h3 {
   }
 
   .feature-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .vote-showcase {
     grid-template-columns: 1fr;
   }
 
