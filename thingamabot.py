@@ -26,10 +26,12 @@ except ImportError:
 
 from data_paths import resolve_data_file
 from guard import (
+    apply_guard_preset,
     guard_default_settings,
     handle_guard_member_join,
     handle_guard_message,
     normalize_guard_settings,
+    resolve_guard_preset_name,
     setup_guard_module,
 )
 from vote import (
@@ -1202,7 +1204,14 @@ bot = commands.Bot(
     help_command=None,
     case_insensitive=True,
 )
-setup_vote_module(bot)
+setup_vote_module(
+    bot,
+    get_guild_config=get_guild_config,
+    save_settings=save_settings,
+    send_ops_log=send_ops_log,
+    resolve_guard_preset_name=resolve_guard_preset_name,
+    apply_guard_preset=apply_guard_preset,
+)
 setup_guard_module(
     bot,
     require_mod_context=require_mod_context,
@@ -1480,7 +1489,7 @@ async def help_command(ctx: commands.Context, *, command_name: str | None = None
         name="Community",
         value=(
             "`poll` `choose` `roll` `remindme` `reminders` "
-            "`cancelreminder` `votecreate` `startelection` `voteextend` `voteclose`"
+            "`cancelreminder` `votecreate` `voteaction` `startelection` `voteextend` `voteclose`"
         ),
         inline=False,
     )
@@ -2623,6 +2632,11 @@ async def voteinfo(ctx: commands.Context, vote_id: str):
         f"Turnout: {turnout} • Ends: {finish_text}",
         f"Anonymous: {'yes' if bool(vote.get('anonymous')) else 'no'}",
     ]
+    execution_action = vote.get("execution_action")
+    if isinstance(execution_action, dict):
+        action_type = str(execution_action.get("type") or "").strip()
+        if action_type:
+            header_lines.append(f"On pass: `{action_type}`")
     if option_lines:
         header_lines.append("Tallies:")
         header_lines.extend(option_lines)

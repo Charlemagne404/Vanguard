@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import sys
 from datetime import timezone
@@ -177,3 +178,49 @@ def test_election_outcome_can_trigger_runoff(monkeypatch, tmp_path):
     outcome = vote._compute_vote_outcome(payload, tallies, turnout)
     assert outcome["status"] == "runoff"
     assert outcome["runoff_candidates"] == ["a", "b"]
+
+
+def test_normalize_vote_supports_execution_action(monkeypatch, tmp_path):
+    vote, _ = load_vote(monkeypatch, tmp_path)
+
+    payload = {
+        "channel_id": 1,
+        "message_id": 2,
+        "starter_id": 3,
+        "vote_type": "yesno",
+        "options": [
+            {"id": "yes", "label": "Yes"},
+            {"id": "no", "label": "No"},
+        ],
+        "execution_action": {
+            "type": "slowmode",
+            "seconds": 999999,
+            "channel_id": "123",
+        },
+        "finish_at": "2026-01-01T12:00:00+00:00",
+    }
+
+    normalized = vote._normalize_vote("1-2-3", payload)
+    assert normalized is not None
+    assert normalized["execution_action"] == {
+        "type": "slowmode",
+        "seconds": 21600,
+        "channel_id": 123,
+    }
+
+
+def test_execute_vote_action_only_runs_on_passed_outcomes(monkeypatch, tmp_path):
+    vote, _ = load_vote(monkeypatch, tmp_path)
+
+    message = asyncio.run(
+        vote._execute_vote_action(
+            None,
+            "1-2-3",
+            {"execution_action": {"type": "lockdown"}},
+            {"status": "failed"},
+            fallback_channel=None,
+        )
+    )
+    assert message is not None
+    assert "skipped" in message
+    assert "failed" in message

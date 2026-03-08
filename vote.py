@@ -7,7 +7,7 @@ import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import discord
 from discord.ext import commands
@@ -20,6 +20,21 @@ ACTIVE_FINISH_TASKS: dict[str, asyncio.Task] = {}
 
 MAX_DURATION_HOURS = 168
 MAX_OPTIONS = 10
+MAX_SLOWMODE_SECONDS = 21600
+
+GetGuildConfigCallback = Callable[[int], dict[str, Any]]
+SaveSettingsCallback = Callable[[], None]
+SendOpsLogCallback = Callable[[discord.Guild, str], Awaitable[None]]
+ResolveGuardPresetNameCallback = Callable[[str | None], str | None]
+ApplyGuardPresetCallback = Callable[[dict[str, Any], str], bool]
+
+ACTION_CALLBACKS: dict[str, Any] = {
+    "get_guild_config": None,
+    "save_settings": None,
+    "send_ops_log": None,
+    "resolve_guard_preset_name": None,
+    "apply_guard_preset": None,
+}
 
 
 def _as_int(value: Any, default: int | None = None) -> int | None:
@@ -223,6 +238,67 @@ def _build_legacy_votes_map(ballots: dict[str, list[str]]) -> dict[str, str]:
     return legacy
 
 
+def _normalize_execution_action(raw_action: Any) -> dict[str, Any] | None:
+    if not isinstance(raw_action, dict):
+        return None
+
+    action_type = str(raw_action.get("type") or "").strip().lower()
+    if action_type in {"", "none"}:
+        return None
+
+    if action_type == "guard_preset":
+        preset = str(raw_action.get("preset") or raw_action.get("value") or "").strip().lower()
+        if not preset:
+            return None
+        return {"type": action_type, "preset": preset}
+
+    if action_type == "guard_toggle":
+        enabled_raw = raw_action.get("enabled")
+        if enabled_raw is None:
+            enabled_raw = raw_action.get("value")
+        if enabled_raw is None:
+            return None
+        return {"type": action_type, "enabled": _as_bool(enabled_raw, False)}
+
+    if action_type in {"lockdown", "unlock"}:
+        return {"type": action_type}
+
+    if action_type == "slowmode":
+        seconds = _as_int(raw_action.get("seconds"))
+        if seconds is None:
+            seconds = _as_int(raw_action.get("value"))
+        if seconds is None:
+            return None
+        channel_id = _as_int(raw_action.get("channel_id"))
+        return {
+            "type": action_type,
+            "seconds": _clamp(seconds, 0, MAX_SLOWMODE_SECONDS),
+            "channel_id": channel_id,
+        }
+
+    return None
+
+
+def _execution_action_summary(action: dict[str, Any]) -> str:
+    action_type = str(action.get("type") or "").strip().lower()
+    if action_type == "guard_preset":
+        preset = str(action.get("preset") or "unknown")
+        return f"Set guard preset to `{preset}`."
+    if action_type == "guard_toggle":
+        enabled = _as_bool(action.get("enabled"), False)
+        return "Enable guard mode." if enabled else "Disable guard mode."
+    if action_type == "lockdown":
+        return "Apply server lockdown."
+    if action_type == "unlock":
+        return "Lift server lockdown."
+    if action_type == "slowmode":
+        seconds = max(0, _as_int(action.get("seconds"), 0) or 0)
+        channel_id = _as_int(action.get("channel_id"))
+        channel_hint = f" in <#{channel_id}>" if channel_id else " in the vote channel"
+        return f"Set channel slowmode to `{seconds}s`{channel_hint}."
+    return "Run a configured automation action."
+
+
 def _normalize_vote_type(raw: Any, options: list[dict[str, Any]], payload: dict[str, Any]) -> str:
     token = str(raw or "").strip().lower()
     if token in {"confidence", "yesno", "proposal", "approval", "election"}:
@@ -367,6 +443,7 @@ def _normalize_vote(vote_id: str, payload: Any) -> dict[str, Any] | None:
         "runoff_from": str(payload.get("runoff_from") or "").strip() or None,
         "delete_channel_after_close": _as_bool(payload.get("delete_channel_after_close"), False),
         "delete_delay_seconds": max(0, _as_int(payload.get("delete_delay_seconds"), 3600) or 3600),
+        "execution_action": _normalize_execution_action(payload.get("execution_action")),
     }
 
     return normalized
@@ -725,6 +802,10 @@ def _build_vote_embed(
     if _as_bool(vote.get("anonymous"), False):
         rules_line.append("Anonymous")
     embed.add_field(name="Rules", value=" • ".join(rules_line), inline=False)
+
+    execution_action = _normalize_execution_action(vote.get("execution_action"))
+    if execution_action:
+        embed.add_field(name="On Pass", value=_execution_action_summary(execution_action), inline=False)
 
     show_live_results = _as_bool(vote.get("show_live_results"), True)
     if show_live_results or closed:
@@ -1210,6 +1291,7 @@ async def _create_vote(
     delete_channel_after_close: bool = False,
     delete_delay_seconds: int = 3600,
     runoff_from: str | None = None,
+    execution_action: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     duration_hours = _clamp(duration_hours, 1, MAX_DURATION_HOURS)
     finish_time = datetime.now(timezone.utc) + timedelta(hours=duration_hours)
@@ -1249,6 +1331,7 @@ async def _create_vote(
         "runoff_from": runoff_from,
         "delete_channel_after_close": bool(delete_channel_after_close),
         "delete_delay_seconds": max(0, int(delete_delay_seconds)),
+        "execution_action": _normalize_execution_action(execution_action),
     }
 
     payload = _sync_legacy_vote_fields(payload)
@@ -1359,6 +1442,234 @@ async def _create_election_runoff(
     return runoff_id
 
 
+def _guild_id_from_vote_id(vote_id: str) -> int | None:
+    token = str(vote_id or "").split("-", 1)[0]
+    return _as_int(token)
+
+
+async def _resolve_text_channel(bot: commands.Bot, channel_id: int | None) -> discord.TextChannel | None:
+    if channel_id is None:
+        return None
+    channel = bot.get_channel(channel_id)
+    if isinstance(channel, discord.TextChannel):
+        return channel
+    try:
+        fetched = await bot.fetch_channel(channel_id)
+        if isinstance(fetched, discord.TextChannel):
+            return fetched
+    except Exception:
+        return None
+    return None
+
+
+async def _resolve_action_channel(
+    bot: commands.Bot,
+    *,
+    vote: dict[str, Any],
+    action: dict[str, Any],
+    fallback_channel: discord.TextChannel | None,
+) -> discord.TextChannel | None:
+    action_channel_id = _as_int(action.get("channel_id"))
+    if fallback_channel is not None and (
+        action_channel_id is None or action_channel_id == fallback_channel.id
+    ):
+        return fallback_channel
+
+    vote_channel_id = _as_int(vote.get("channel_id"))
+    target_channel_id = action_channel_id if action_channel_id is not None else vote_channel_id
+    return await _resolve_text_channel(bot, target_channel_id)
+
+
+def _callback(name: str) -> Any:
+    candidate = ACTION_CALLBACKS.get(name)
+    return candidate if callable(candidate) else None
+
+
+async def _send_action_ops_log(guild: discord.Guild, message: str) -> None:
+    callback = _callback("send_ops_log")
+    if callback is None:
+        return
+    try:
+        await callback(guild, message)
+    except Exception:
+        pass
+
+
+async def _set_lockdown_from_vote(
+    guild: discord.Guild,
+    vote_id: str,
+    *,
+    locked: bool,
+) -> tuple[bool, str]:
+    get_guild_config = _callback("get_guild_config")
+    guild_cfg: dict[str, Any] = {}
+    if get_guild_config is not None:
+        try:
+            fetched_cfg = get_guild_config(guild.id)
+            if isinstance(fetched_cfg, dict):
+                guild_cfg = fetched_cfg
+        except Exception:
+            guild_cfg = {}
+
+    target_role_id = _as_int(guild_cfg.get("lockdown_role_id"))
+    target_role = guild.get_role(target_role_id) if target_role_id else guild.default_role
+    if target_role is None:
+        return False, "Configured lockdown role was not found."
+
+    updated = 0
+    failed = 0
+    for channel in guild.text_channels:
+        overwrite = channel.overwrites_for(target_role)
+        overwrite.send_messages = not locked
+        try:
+            await channel.set_permissions(
+                target_role,
+                overwrite=overwrite,
+                reason=f"Vote auto-action ({vote_id})",
+            )
+            updated += 1
+        except Exception:
+            failed += 1
+
+    if updated == 0 and failed > 0:
+        return False, "I could not update channel permissions for lockdown."
+
+    state_text = "enabled" if locked else "lifted"
+    return (
+        True,
+        f"Lockdown {state_text} for role `{target_role.name}` ({updated} updated, {failed} failed).",
+    )
+
+
+async def _execute_vote_action(
+    bot: commands.Bot,
+    vote_id: str,
+    vote: dict[str, Any],
+    outcome: dict[str, Any],
+    *,
+    fallback_channel: discord.TextChannel | None,
+) -> str | None:
+    action = _normalize_execution_action(vote.get("execution_action"))
+    if not action:
+        return None
+
+    action_summary = _execution_action_summary(action)
+    status = str(outcome.get("status") or "").lower()
+    if status != "passed":
+        return f"⏭️ Auto-action skipped: {action_summary} (status `{status}`)."
+
+    guild = fallback_channel.guild if fallback_channel else None
+    if guild is None:
+        guild_id = _guild_id_from_vote_id(vote_id)
+        if guild_id is not None:
+            guild = bot.get_guild(guild_id)
+
+    action_type = str(action.get("type") or "").strip().lower()
+    if action_type == "guard_preset":
+        if guild is None:
+            return "⚠️ Auto-action failed: could not resolve server for guard update."
+
+        get_guild_config = _callback("get_guild_config")
+        apply_guard_preset = _callback("apply_guard_preset")
+        if get_guild_config is None or apply_guard_preset is None:
+            return "⚠️ Auto-action failed: guard integration is unavailable."
+
+        try:
+            guild_cfg = get_guild_config(guild.id)
+        except Exception:
+            guild_cfg = None
+        if not isinstance(guild_cfg, dict):
+            return "⚠️ Auto-action failed: server config is unavailable."
+
+        requested = str(action.get("preset") or "").strip().lower()
+        resolve_guard_name = _callback("resolve_guard_preset_name")
+        preset_name = resolve_guard_name(requested) if resolve_guard_name else requested
+        if not preset_name:
+            return f"⚠️ Auto-action failed: unknown guard preset `{requested}`."
+
+        try:
+            applied = bool(apply_guard_preset(guild_cfg, preset_name))
+        except Exception:
+            applied = False
+        if not applied:
+            return f"⚠️ Auto-action failed: could not apply preset `{preset_name}`."
+
+        save_settings = _callback("save_settings")
+        if save_settings is not None:
+            try:
+                save_settings()
+            except Exception:
+                return f"⚠️ Auto-action partial failure: preset `{preset_name}` applied but settings save failed."
+
+        await _send_action_ops_log(guild, f"🗳️ Vote `{vote_id}` applied guard preset `{preset_name}`.")
+        return f"✅ Auto-action executed: guard preset set to `{preset_name}`."
+
+    if action_type == "guard_toggle":
+        if guild is None:
+            return "⚠️ Auto-action failed: could not resolve server for guard update."
+
+        get_guild_config = _callback("get_guild_config")
+        if get_guild_config is None:
+            return "⚠️ Auto-action failed: guard integration is unavailable."
+
+        try:
+            guild_cfg = get_guild_config(guild.id)
+        except Exception:
+            guild_cfg = None
+        if not isinstance(guild_cfg, dict):
+            return "⚠️ Auto-action failed: server config is unavailable."
+
+        enabled = _as_bool(action.get("enabled"), False)
+        guild_cfg["guard_enabled"] = enabled
+
+        save_settings = _callback("save_settings")
+        if save_settings is not None:
+            try:
+                save_settings()
+            except Exception:
+                return "⚠️ Auto-action partial failure: guard state changed but settings save failed."
+
+        state = "enabled" if enabled else "disabled"
+        await _send_action_ops_log(guild, f"🗳️ Vote `{vote_id}` {state} guard mode.")
+        return f"✅ Auto-action executed: guard mode {state}."
+
+    if action_type in {"lockdown", "unlock"}:
+        if guild is None:
+            return "⚠️ Auto-action failed: could not resolve server for lockdown action."
+        locked = action_type == "lockdown"
+        ok, details = await _set_lockdown_from_vote(guild, vote_id, locked=locked)
+        if not ok:
+            return f"⚠️ Auto-action failed: {details}"
+        await _send_action_ops_log(guild, f"🗳️ Vote `{vote_id}` {details}")
+        return f"✅ Auto-action executed: {details}"
+
+    if action_type == "slowmode":
+        target_channel = await _resolve_action_channel(
+            bot,
+            vote=vote,
+            action=action,
+            fallback_channel=fallback_channel,
+        )
+        if target_channel is None:
+            return "⚠️ Auto-action failed: target channel for slowmode was not found."
+        seconds = _clamp(_as_int(action.get("seconds"), 0) or 0, 0, MAX_SLOWMODE_SECONDS)
+        try:
+            await target_channel.edit(
+                slowmode_delay=seconds,
+                reason=f"Vote auto-action ({vote_id})",
+            )
+        except Exception:
+            return f"⚠️ Auto-action failed: I could not set slowmode in {target_channel.mention}."
+
+        await _send_action_ops_log(
+            target_channel.guild,
+            f"🗳️ Vote `{vote_id}` set slowmode in {target_channel.mention} to {seconds}s.",
+        )
+        return f"✅ Auto-action executed: slowmode in {target_channel.mention} set to `{seconds}s`."
+
+    return f"⚠️ Auto-action failed: unsupported action type `{action_type}`."
+
+
 async def finish_vote(bot: commands.Bot, vote_id: str) -> None:
     vote = votes.get(vote_id)
     if not vote:
@@ -1404,6 +1715,16 @@ async def finish_vote(bot: commands.Bot, vote_id: str) -> None:
                 f"\nStarter: {starter_text}{target_text}"
             )
 
+            action_update = await _execute_vote_action(
+                bot,
+                vote_id,
+                vote,
+                outcome,
+                fallback_channel=channel,
+            )
+            if action_update:
+                await channel.send(action_update)
+
             if outcome.get("status") == "runoff" and str(vote.get("vote_type")) == "election":
                 await _create_election_runoff(
                     bot=bot,
@@ -1415,6 +1736,14 @@ async def finish_vote(bot: commands.Bot, vote_id: str) -> None:
             if _as_bool(vote.get("delete_channel_after_close"), False) and channel_id is not None:
                 delay = max(0, _as_int(vote.get("delete_delay_seconds"), 3600) or 3600)
                 asyncio.create_task(_delete_vote_channel_later(bot, channel_id, delay_seconds=delay))
+        else:
+            await _execute_vote_action(
+                bot,
+                vote_id,
+                vote,
+                outcome,
+                fallback_channel=None,
+            )
     except Exception as exc:
         print("Error finishing vote:", exc)
     finally:
@@ -1536,7 +1865,21 @@ def _vote_belongs_to_guild(vote_id: str, guild: discord.Guild) -> bool:
     return token.startswith(f"{guild.id}-")
 
 
-def setup_vote_module(bot: commands.Bot) -> None:
+def setup_vote_module(
+    bot: commands.Bot,
+    *,
+    get_guild_config: GetGuildConfigCallback | None = None,
+    save_settings: SaveSettingsCallback | None = None,
+    send_ops_log: SendOpsLogCallback | None = None,
+    resolve_guard_preset_name: ResolveGuardPresetNameCallback | None = None,
+    apply_guard_preset: ApplyGuardPresetCallback | None = None,
+) -> None:
+    ACTION_CALLBACKS["get_guild_config"] = get_guild_config
+    ACTION_CALLBACKS["save_settings"] = save_settings
+    ACTION_CALLBACKS["send_ops_log"] = send_ops_log
+    ACTION_CALLBACKS["resolve_guard_preset_name"] = resolve_guard_preset_name
+    ACTION_CALLBACKS["apply_guard_preset"] = apply_guard_preset
+
     @bot.hybrid_command(name="votecreate")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
@@ -1670,6 +2013,148 @@ def setup_vote_module(bot: commands.Bot) -> None:
         await _send_ctx_message(
             ctx,
             f"✅ Vote created in {target_channel.mention}. Vote ID: `{vote_id}`",
+        )
+
+    @bot.hybrid_command(name="voteaction")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    @commands.bot_has_permissions(send_messages=True, embed_links=True)
+    async def voteaction(
+        ctx: commands.Context,
+        title: str,
+        action: str,
+        duration_hours: int = 24,
+        quorum: int = 0,
+        pass_threshold_percent: int = 50,
+        channel: discord.TextChannel | None = None,
+        guard_preset: str | None = None,
+        guard_enabled: bool | None = None,
+        slowmode_seconds: int | None = None,
+        action_channel: discord.TextChannel | None = None,
+        min_account_days: int = 0,
+        min_join_days: int = 0,
+        eligible_role: discord.Role | None = None,
+        anonymous: bool = False,
+        hide_live_results: bool = False,
+    ) -> None:
+        """Create a vote that automatically executes an action when it passes."""
+        guild = ctx.guild
+        if not guild:
+            await _send_ctx_message(ctx, "This command must be used in a server.")
+            return
+
+        duration_hours = _as_int(duration_hours, 24) or 24
+        if duration_hours < 1 or duration_hours > MAX_DURATION_HOURS:
+            await _send_ctx_message(ctx, f"⚠️ Duration must be between 1 and {MAX_DURATION_HOURS} hours.")
+            return
+
+        action_token = str(action or "").strip().lower().replace("-", "_").replace(" ", "_")
+        execution_action: dict[str, Any] | None = None
+
+        if action_token in {"lockdown", "lock"}:
+            execution_action = {"type": "lockdown"}
+        elif action_token in {"unlock", "lift_lockdown"}:
+            execution_action = {"type": "unlock"}
+        elif action_token in {"guard_on", "enable_guard", "guard_enable"}:
+            execution_action = {"type": "guard_toggle", "enabled": True}
+        elif action_token in {"guard_off", "disable_guard", "guard_disable"}:
+            execution_action = {"type": "guard_toggle", "enabled": False}
+        elif action_token in {"guard_toggle", "toggle_guard"}:
+            if guard_enabled is None:
+                await _send_ctx_message(
+                    ctx,
+                    "⚠️ `guard_toggle` requires `guard_enabled=true` or `guard_enabled=false`.",
+                )
+                return
+            execution_action = {"type": "guard_toggle", "enabled": bool(guard_enabled)}
+        elif action_token in {"guard_preset", "preset"}:
+            preset_input = str(guard_preset or "").strip()
+            if not preset_input:
+                await _send_ctx_message(ctx, "⚠️ `guard_preset` action requires `guard_preset`.")
+                return
+
+            resolver = _callback("resolve_guard_preset_name")
+            preset_name = resolver(preset_input) if resolver else preset_input.lower()
+            if not preset_name:
+                await _send_ctx_message(
+                    ctx,
+                    "⚠️ Unknown guard preset. Valid presets are typically: off, relaxed, balanced, strict, siege.",
+                )
+                return
+            execution_action = {"type": "guard_preset", "preset": preset_name}
+        elif action_token in {"slowmode", "set_slowmode"}:
+            seconds = _as_int(slowmode_seconds)
+            if seconds is None:
+                await _send_ctx_message(ctx, "⚠️ `slowmode` action requires `slowmode_seconds`.")
+                return
+            execution_action = {
+                "type": "slowmode",
+                "seconds": _clamp(seconds, 0, MAX_SLOWMODE_SECONDS),
+                "channel_id": action_channel.id if action_channel else None,
+            }
+        else:
+            await _send_ctx_message(
+                ctx,
+                (
+                    "⚠️ Unknown action. Supported: lockdown, unlock, guard_on, guard_off, "
+                    "guard_toggle, guard_preset, slowmode."
+                ),
+            )
+            return
+
+        normalized_action = _normalize_execution_action(execution_action)
+        if normalized_action is None:
+            await _send_ctx_message(ctx, "⚠️ Invalid action configuration.")
+            return
+
+        target_channel = channel or ctx.channel
+        if not isinstance(target_channel, discord.TextChannel):
+            await _send_ctx_message(ctx, "⚠️ Target channel must be a text channel.")
+            return
+
+        option_list = [
+            {"id": "yes", "label": "Yes", "description": "", "member_id": None},
+            {"id": "no", "label": "No", "description": "", "member_id": None},
+        ]
+        description = (
+            "If this vote passes, Vanguard will automatically run this action:\n"
+            f"• {_execution_action_summary(normalized_action)}\n"
+            "If the vote fails, no action is executed."
+        )
+
+        try:
+            vote_id, _ = await _create_vote(
+                bot=bot,
+                guild=guild,
+                channel=target_channel,
+                starter_id=ctx.author.id,
+                title=title[:120],
+                description=description,
+                vote_type="yesno",
+                options=option_list,
+                ballot_mode="single",
+                max_choices=1,
+                duration_hours=duration_hours,
+                min_account_days=max(0, _as_int(min_account_days, 0) or 0),
+                min_join_days=max(0, _as_int(min_join_days, 0) or 0),
+                quorum=max(0, _as_int(quorum, 0) or 0),
+                pass_threshold_percent=_clamp(_as_int(pass_threshold_percent, 50) or 50, 1, 100),
+                anonymous=bool(anonymous),
+                show_live_results=not bool(hide_live_results),
+                eligible_role_id=eligible_role.id if eligible_role else None,
+                primary_option_id="yes",
+                execution_action=normalized_action,
+            )
+        except Exception:
+            await _send_ctx_message(ctx, "⚠️ Failed to create vote action message.")
+            return
+
+        await _send_ctx_message(
+            ctx,
+            (
+                f"🤖 Action vote created in {target_channel.mention}. Vote ID: `{vote_id}`\n"
+                f"On pass: {_execution_action_summary(normalized_action)}"
+            ),
         )
 
     @bot.hybrid_command(name="startelection")
@@ -1878,5 +2363,8 @@ def setup_vote_module(bot: commands.Bot) -> None:
             "Current tallies:",
             _tally_lines(vote, tallies, turnout),
         ]
+        execution_action = _normalize_execution_action(vote.get("execution_action"))
+        if execution_action:
+            lines.insert(10, f"Auto action on pass: {_execution_action_summary(execution_action)}")
 
         await _send_ctx_message(ctx, "\n".join(lines))
