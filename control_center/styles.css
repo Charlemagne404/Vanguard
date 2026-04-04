@@ -109,6 +109,18 @@ h3 {
   border-radius: var(--radius);
 }
 
+.auth-stack,
+.operator-form {
+  display: grid;
+  gap: 12px;
+}
+
+.operator-form {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
 .auth-row,
 .action-row {
   display: flex;
@@ -156,6 +168,10 @@ textarea:focus {
   border: 1px solid transparent;
   cursor: pointer;
   transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .primary-btn {

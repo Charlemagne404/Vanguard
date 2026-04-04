@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+import secrets
+from typing import Any, Awaitable, Callable, Mapping, Sequence
+from urllib.parse import urlencode
 
 from aiohttp import web
 import discord
@@ -13,16 +16,23 @@ import discord
 from guard import GUARD_PRESETS, guard_default_settings, normalize_guard_settings as normalize_guard_profile
 
 AUTH_HEADER = "X-Vanguard-Control-Token"
+SESSION_COOKIE = "vanguard_control_session"
+OAUTH_STATE_COOKIE = "vanguard_oauth_state"
+DISCORD_API_BASE = "https://discord.com/api/v10"
+CONTROL_CENTER_PATH = "/control"
+CONTROL_CENTER_API_PATH = f"{CONTROL_CENTER_PATH}/api"
+CONTROL_CENTER_STATIC_PATH = f"{CONTROL_CENTER_PATH}/static"
+CONTROL_CENTER_AUTH_PATH = f"{CONTROL_CENTER_PATH}/auth"
 
 
 def build_control_center_url(host: str, port: int, public_url: str = "") -> str:
     explicit = public_url.strip().rstrip("/")
     if explicit:
-        return explicit
+        return f"{explicit}{CONTROL_CENTER_PATH}"
     normalized_host = host.strip() or "127.0.0.1"
     if normalized_host in {"0.0.0.0", "::"}:
         normalized_host = "localhost"
-    return f"http://{normalized_host}:{port}"
+    return f"http://{normalized_host}:{port}{CONTROL_CENTER_PATH}"
 
 
 def _coerce_optional_int(value: Any) -> int | None:
@@ -330,6 +340,44 @@ def apply_guild_control_update(
     return {}
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _avatar_url(user_id: int | str, avatar_hash: str | None) -> str | None:
+    if not avatar_hash:
+        return None
+    return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png?size=128"
+
+
+def _discord_authorize_url(client_id: str, redirect_uri: str, state: str) -> str:
+    query = urlencode(
+        {
+            "response_type": "code",
+            "client_id": client_id,
+            "scope": "identify guilds",
+            "redirect_uri": redirect_uri,
+            "state": state,
+        }
+    )
+    return f"https://discord.com/oauth2/authorize?{query}"
+
+
+def _cookie_secure(redirect_uri: str, public_url: str) -> bool:
+    candidate = (public_url or redirect_uri or "").strip().lower()
+    return candidate.startswith("https://")
+
+
+def _public_site_base(public_url: str, host: str, port: int) -> str:
+    explicit = public_url.strip().rstrip("/")
+    if explicit:
+        return explicit
+    normalized_host = host.strip() or "127.0.0.1"
+    if normalized_host in {"0.0.0.0", "::"}:
+        normalized_host = "localhost"
+    return f"http://{normalized_host}:{port}"
+
+
 def create_control_center_app(
     *,
     bot: discord.Client,
@@ -343,39 +391,310 @@ def create_control_center_app(
     modlog: Mapping[str, Sequence[Mapping[str, Any]]],
     vote_store: Mapping[str, Any],
     parse_datetime_utc: Callable[[Any], datetime | None],
+    http_request: Callable[..., Any],
+    can_access_guild: Callable[[discord.Guild, int], Awaitable[bool]],
+    oauth_client_id: str,
+    oauth_client_secret: str,
+    oauth_redirect_uri: str,
+    public_url: str,
+    site_host: str,
+    site_port: int,
     control_token: str,
     static_dir: str | Path,
+    landing_dir: str | Path,
 ) -> web.Application:
     static_root = Path(static_dir)
+    landing_root = Path(landing_dir)
+    secure_cookie = _cookie_secure(oauth_redirect_uri, public_url)
+    oauth_enabled = bool(oauth_client_id and oauth_client_secret and oauth_redirect_uri)
+    site_base_url = _public_site_base(public_url, site_host, site_port)
+    sessions: dict[str, dict[str, Any]] = {}
 
-    @web.middleware
-    async def auth_middleware(request: web.Request, handler: Callable[[web.Request], Any]) -> web.StreamResponse:
-        if not request.path.startswith("/api/"):
-            return await handler(request)
-        if not control_token:
-            return web.json_response({"error": "Control center token is not configured."}, status=503)
+    def clear_session_token(token: str | None) -> None:
+        if token:
+            sessions.pop(token, None)
 
+    async def discord_form_post(form_data: Mapping[str, str]) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            lambda: http_request(
+                "POST",
+                f"{DISCORD_API_BASE}/oauth2/token",
+                data=form_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                auth=(oauth_client_id, oauth_client_secret),
+                timeout=10,
+            )
+        )
+
+    async def exchange_code(code: str) -> dict[str, Any]:
+        response = await discord_form_post(
+            {
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": oauth_redirect_uri,
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def refresh_session_tokens(session_payload: dict[str, Any]) -> dict[str, Any] | None:
+        refresh_token = str(session_payload.get("refresh_token") or "").strip()
+        if not refresh_token:
+            return None
+        try:
+            response = await discord_form_post(
+                {
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                }
+            )
+            response.raise_for_status()
+        except Exception:
+            return None
+        token_payload = response.json()
+        session_payload["access_token"] = str(token_payload.get("access_token") or "")
+        session_payload["refresh_token"] = str(token_payload.get("refresh_token") or refresh_token)
+        expires_in = int(token_payload.get("expires_in") or 0)
+        session_payload["expires_at"] = (_utc_now() + timedelta(seconds=max(60, expires_in))).isoformat()
+        session_payload["guild_cache"] = None
+        return session_payload
+
+    async def discord_api_get(path: str, access_token: str) -> Any:
+        response = await asyncio.to_thread(
+            lambda: http_request(
+                "GET",
+                f"{DISCORD_API_BASE}{path}",
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=10,
+            )
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def build_session_payload(token_payload: Mapping[str, Any], user_payload: Mapping[str, Any]) -> dict[str, Any]:
+        expires_in = int(token_payload.get("expires_in") or 0)
+        user_id = _coerce_optional_int(user_payload.get("id")) or 0
+        return {
+            "user_id": user_id,
+            "username": str(user_payload.get("username") or "Discord user"),
+            "global_name": str(user_payload.get("global_name") or ""),
+            "avatar_url": _avatar_url(user_id, str(user_payload.get("avatar") or "")),
+            "access_token": str(token_payload.get("access_token") or ""),
+            "refresh_token": str(token_payload.get("refresh_token") or ""),
+            "expires_at": (_utc_now() + timedelta(seconds=max(60, expires_in))).isoformat(),
+            "guild_cache": None,
+        }
+
+    async def get_session_from_cookie(request: web.Request) -> dict[str, Any] | None:
+        session_token = request.cookies.get(SESSION_COOKIE)
+        if not session_token:
+            return None
+        session_payload = sessions.get(session_token)
+        if not session_payload:
+            return None
+
+        expires_at = parse_datetime_utc(session_payload.get("expires_at"))
+        if expires_at is None:
+            clear_session_token(session_token)
+            return None
+
+        if expires_at <= _utc_now() + timedelta(minutes=5):
+            refreshed = await refresh_session_tokens(session_payload)
+            if refreshed is None:
+                clear_session_token(session_token)
+                return None
+            session_payload = refreshed
+
+        request["session_token"] = session_token
+        return session_payload
+
+    async def get_session_user_guild_ids(session_payload: dict[str, Any]) -> set[int]:
+        cached = session_payload.get("guild_cache")
+        cached_at = parse_datetime_utc(cached.get("cached_at")) if isinstance(cached, dict) else None
+        if cached_at and cached_at > _utc_now() - timedelta(minutes=2):
+            return {
+                guild_id
+                for guild_id in (
+                    _coerce_optional_int(item) for item in cached.get("guild_ids", [])
+                )
+                if guild_id
+            }
+
+        try:
+            guild_payloads = await discord_api_get("/users/@me/guilds", str(session_payload.get("access_token") or ""))
+        except Exception:
+            return set()
+
+        guild_ids = {
+            guild_id
+            for guild_id in (
+                _coerce_optional_int(item.get("id")) if isinstance(item, dict) else None
+                for item in guild_payloads if isinstance(guild_payloads, list)
+            )
+            if guild_id
+        }
+        session_payload["guild_cache"] = {
+            "cached_at": _utc_now().isoformat(),
+            "guild_ids": sorted(guild_ids),
+        }
+        return guild_ids
+
+    async def get_request_auth(request: web.Request) -> dict[str, Any] | None:
         supplied = request.headers.get(AUTH_HEADER, "").strip()
         if not supplied:
             authorization = request.headers.get("Authorization", "").strip()
             if authorization.lower().startswith("bearer "):
                 supplied = authorization[7:].strip()
-        if supplied != control_token:
+        if control_token and supplied == control_token:
+            return {
+                "mode": "operator",
+                "user_id": None,
+                "username": "Operator",
+                "avatar_url": None,
+                "manageable_guild_ids": {guild.id for guild in bot.guilds},
+            }
+
+        session_payload = await get_session_from_cookie(request)
+        if not session_payload:
+            return None
+
+        guild_ids = await get_session_user_guild_ids(session_payload)
+        manageable: set[int] = set()
+        user_id = int(session_payload["user_id"])
+        for guild in bot.guilds:
+            if guild.id not in guild_ids:
+                continue
+            if await can_access_guild(guild, user_id):
+                manageable.add(guild.id)
+
+        return {
+            "mode": "discord",
+            "user_id": user_id,
+            "username": str(session_payload.get("global_name") or session_payload.get("username") or "Discord user"),
+            "avatar_url": session_payload.get("avatar_url"),
+            "manageable_guild_ids": manageable,
+        }
+
+    @web.middleware
+    async def auth_middleware(request: web.Request, handler: Callable[[web.Request], Any]) -> web.StreamResponse:
+        if not request.path.startswith(f"{CONTROL_CENTER_API_PATH}/"):
+            return await handler(request)
+        if request.path == f"{CONTROL_CENTER_API_PATH}/session":
+            return await handler(request)
+        auth = await get_request_auth(request)
+        if auth is None:
             return web.json_response({"error": "Unauthorized."}, status=401)
+        request["auth"] = auth
         return await handler(request)
 
     app = web.Application(middlewares=[auth_middleware])
 
+    async def landing_index(_: web.Request) -> web.StreamResponse:
+        return web.FileResponse(landing_root / "index.html")
+
     async def index(_: web.Request) -> web.StreamResponse:
         return web.FileResponse(static_root / "index.html")
 
-    async def guild_list(_: web.Request) -> web.StreamResponse:
-        guilds = sorted(bot.guilds, key=lambda item: item.name.lower())
+    async def session_info(request: web.Request) -> web.StreamResponse:
+        auth = await get_request_auth(request)
+        if auth is None:
+            return web.json_response(
+                {
+                    "authenticated": False,
+                    "oauth_enabled": oauth_enabled,
+                    "operator_token_enabled": bool(control_token),
+                    "control_path": CONTROL_CENTER_PATH,
+                    "site_base_url": site_base_url,
+                }
+            )
+        return web.json_response(
+            {
+                "authenticated": True,
+                "oauth_enabled": oauth_enabled,
+                "operator_token_enabled": bool(control_token),
+                "control_path": CONTROL_CENTER_PATH,
+                "site_base_url": site_base_url,
+                "mode": auth["mode"],
+                "user": {
+                    "id": auth.get("user_id"),
+                    "name": auth.get("username"),
+                    "avatar_url": auth.get("avatar_url"),
+                },
+            }
+        )
+
+    async def auth_login(_: web.Request) -> web.StreamResponse:
+        if not oauth_enabled:
+            return web.Response(status=503, text="Discord OAuth is not configured.")
+        state = secrets.token_urlsafe(24)
+        response = web.HTTPFound(_discord_authorize_url(oauth_client_id, oauth_redirect_uri, state))
+        response.set_cookie(
+            OAUTH_STATE_COOKIE,
+            state,
+            httponly=True,
+            secure=secure_cookie,
+            samesite="Lax",
+            path="/",
+            max_age=600,
+        )
+        raise response
+
+    async def auth_callback(request: web.Request) -> web.StreamResponse:
+        if not oauth_enabled:
+            return web.Response(status=503, text="Discord OAuth is not configured.")
+        returned_state = str(request.query.get("state") or "")
+        expected_state = request.cookies.get(OAUTH_STATE_COOKIE, "")
+        code = str(request.query.get("code") or "")
+        if not returned_state or not expected_state or returned_state != expected_state or not code:
+            return web.Response(status=400, text="OAuth validation failed.")
+
+        try:
+            token_payload = await exchange_code(code)
+            user_payload = await discord_api_get("/users/@me", str(token_payload.get("access_token") or ""))
+        except Exception:
+            return web.Response(status=502, text="Discord OAuth exchange failed.")
+
+        session_token = secrets.token_urlsafe(32)
+        sessions[session_token] = build_session_payload(token_payload, user_payload)
+        response = web.HTTPFound(CONTROL_CENTER_PATH + "/")
+        response.set_cookie(
+            SESSION_COOKIE,
+            session_token,
+            httponly=True,
+            secure=secure_cookie,
+            samesite="Lax",
+            path="/",
+            max_age=60 * 60 * 24 * 7,
+        )
+        response.del_cookie(OAUTH_STATE_COOKIE, path="/")
+        raise response
+
+    async def auth_logout(request: web.Request) -> web.StreamResponse:
+        clear_session_token(request.cookies.get(SESSION_COOKIE))
+        response = web.json_response({"ok": True})
+        response.del_cookie(SESSION_COOKIE, path="/")
+        response.del_cookie(OAUTH_STATE_COOKIE, path="/")
+        return response
+
+    def get_manageable_guilds(auth: Mapping[str, Any]) -> list[discord.Guild]:
+        manageable_ids = set(auth.get("manageable_guild_ids", set()))
+        return sorted(
+            [guild for guild in bot.guilds if guild.id in manageable_ids],
+            key=lambda item: item.name.lower(),
+        )
+
+    async def guild_list(request: web.Request) -> web.StreamResponse:
+        auth = request["auth"]
+        guilds = get_manageable_guilds(auth)
         payload = {
             "bot": {
                 "name": getattr(getattr(bot, "user", None), "name", "Vanguard"),
                 "id": getattr(getattr(bot, "user", None), "id", None),
-                "guild_count": len(guilds),
+                "guild_count": len(bot.guilds),
+            },
+            "viewer": {
+                "mode": auth.get("mode"),
+                "name": auth.get("username"),
             },
             "guilds": [
                 build_guild_overview(
@@ -393,10 +712,13 @@ def create_control_center_app(
         return web.json_response(payload)
 
     async def guild_detail(request: web.Request) -> web.StreamResponse:
+        auth = request["auth"]
         guild_id = _coerce_optional_int(request.match_info.get("guild_id"))
         guild = bot.get_guild(guild_id or 0)
         if guild is None:
             return web.json_response({"error": "Guild not found."}, status=404)
+        if guild.id not in set(auth.get("manageable_guild_ids", set())):
+            return web.json_response({"error": "Forbidden."}, status=403)
         payload = build_guild_detail(
             guild,
             get_guild_config(guild.id),
@@ -410,10 +732,13 @@ def create_control_center_app(
         return web.json_response(payload)
 
     async def update_guild(request: web.Request) -> web.StreamResponse:
+        auth = request["auth"]
         guild_id = _coerce_optional_int(request.match_info.get("guild_id"))
         guild = bot.get_guild(guild_id or 0)
         if guild is None:
             return web.json_response({"error": "Guild not found."}, status=404)
+        if guild.id not in set(auth.get("manageable_guild_ids", set())):
+            return web.json_response({"error": "Forbidden."}, status=403)
         try:
             payload = await request.json()
         except Exception:
@@ -444,11 +769,18 @@ def create_control_center_app(
         )
         return web.json_response(response_payload)
 
-    app.router.add_get("/", index)
-    app.router.add_get("/api/guilds", guild_list)
-    app.router.add_get("/api/guilds/{guild_id}", guild_detail)
-    app.router.add_put("/api/guilds/{guild_id}", update_guild)
-    app.router.add_static("/static/", static_root, show_index=False)
+    app.router.add_get("/", landing_index)
+    app.router.add_get(CONTROL_CENTER_PATH, index)
+    app.router.add_get(CONTROL_CENTER_PATH + "/", index)
+    app.router.add_get(f"{CONTROL_CENTER_AUTH_PATH}/login", auth_login)
+    app.router.add_get(f"{CONTROL_CENTER_AUTH_PATH}/callback", auth_callback)
+    app.router.add_post(f"{CONTROL_CENTER_AUTH_PATH}/logout", auth_logout)
+    app.router.add_get(f"{CONTROL_CENTER_API_PATH}/session", session_info)
+    app.router.add_get(f"{CONTROL_CENTER_API_PATH}/guilds", guild_list)
+    app.router.add_get(f"{CONTROL_CENTER_API_PATH}/guilds/{{guild_id}}", guild_detail)
+    app.router.add_put(f"{CONTROL_CENTER_API_PATH}/guilds/{{guild_id}}", update_guild)
+    app.router.add_static("/site/", landing_root, show_index=False)
+    app.router.add_static(CONTROL_CENTER_STATIC_PATH + "/", static_root, show_index=False)
     return app
 
 

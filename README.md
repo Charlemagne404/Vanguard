@@ -85,7 +85,10 @@ Environment variables are read from `.env` (via `python-dotenv`) or your shell.
 - `VANGUARD_CONTROL_CENTER_ENABLED` (default: `false`; starts the web dashboard inside the bot process)
 - `VANGUARD_CONTROL_CENTER_HOST` (default: `127.0.0.1`)
 - `VANGUARD_CONTROL_CENTER_PORT` (default: `8080`)
-- `VANGUARD_CONTROL_CENTER_TOKEN` (required when the control center is enabled; sent by the dashboard as an auth header)
+- `VANGUARD_CONTROL_CENTER_CLIENT_ID` (Discord application client ID for OAuth login; usually your app/application ID)
+- `VANGUARD_CONTROL_CENTER_CLIENT_SECRET` (Discord OAuth client secret)
+- `VANGUARD_CONTROL_CENTER_REDIRECT_URI` (registered Discord OAuth callback URL, for example `http://127.0.0.1:8080/control/auth/callback`)
+- `VANGUARD_CONTROL_CENTER_TOKEN` (optional operator override token for full-instance access; normal users should log in with Discord)
 - `VANGUARD_CONTROL_CENTER_PUBLIC_URL` (optional URL advertised by `/controlcenter`; useful when the bot is reverse-proxied)
 - `PRIVACY_POLICY_URL` (optional)
 - `TERMS_OF_SERVICE_URL` (optional)
@@ -118,19 +121,22 @@ Vanguard now includes an embedded control center website for per-server configur
 
 ```bash
 VANGUARD_CONTROL_CENTER_ENABLED=true
-VANGUARD_CONTROL_CENTER_TOKEN=choose-a-long-random-token
 VANGUARD_CONTROL_CENTER_HOST=127.0.0.1
 VANGUARD_CONTROL_CENTER_PORT=8080
+VANGUARD_CONTROL_CENTER_CLIENT_ID=your-discord-application-id
+VANGUARD_CONTROL_CENTER_CLIENT_SECRET=your-discord-client-secret
+VANGUARD_CONTROL_CENTER_REDIRECT_URI=http://127.0.0.1:8080/control/auth/callback
 ```
 
-2. Start the bot and open `http://127.0.0.1:8080`.
-3. Paste the configured control token into the dashboard login box.
-4. Pick a guild and update:
+2. Start the bot and open `http://127.0.0.1:8080` for the branded site.
+3. Sign in with Discord.
+4. The dashboard will only show Vanguard guilds where the signed-in user can already moderate/configure the bot.
+5. Pick a guild and update:
    - welcome channel, welcome role, and welcome message
    - ops/log channels, lockdown role, and extra mod roles
    - guard presets plus advanced anti-raid thresholds
 
-The `/controlcenter` command shows the configured dashboard URL to moderators. By default the site binds to localhost; if you expose it behind a reverse proxy, set `VANGUARD_CONTROL_CENTER_PUBLIC_URL` and keep the token secret.
+The public landing page is served at `/` and the authenticated control center lives at `/control/` on the same website. The optional `VANGUARD_CONTROL_CENTER_TOKEN` still works as an operator override if you need full-instance access. The `/controlcenter` command shows the configured dashboard URL to moderators. By default the site binds to localhost; if you expose it behind a reverse proxy, set `VANGUARD_CONTROL_CENTER_PUBLIC_URL`, use an HTTPS callback URL, and keep the operator token secret.
 
 ## Testing and Linting
 

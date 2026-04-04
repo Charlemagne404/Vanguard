@@ -296,12 +296,16 @@ VANGUARD_CONTROL_CENTER_PORT = _parse_env_int(
     minimum=1,
     maximum=65535,
 )
+VANGUARD_CONTROL_CENTER_CLIENT_ID = os.getenv("VANGUARD_CONTROL_CENTER_CLIENT_ID", "").strip()
+VANGUARD_CONTROL_CENTER_CLIENT_SECRET = os.getenv("VANGUARD_CONTROL_CENTER_CLIENT_SECRET", "").strip()
+VANGUARD_CONTROL_CENTER_REDIRECT_URI = os.getenv("VANGUARD_CONTROL_CENTER_REDIRECT_URI", "").strip()
 VANGUARD_CONTROL_CENTER_TOKEN = os.getenv("VANGUARD_CONTROL_CENTER_TOKEN", "").strip()
 VANGUARD_CONTROL_CENTER_PUBLIC_URL = os.getenv("VANGUARD_CONTROL_CENTER_PUBLIC_URL", "").strip()
 SETTINGS_FILE = resolve_data_file("settings.json")
 REMINDERS_FILE = resolve_data_file("reminders.json")
 MOD_LOG_FILE = resolve_data_file("modlog.json")
 CONTROL_CENTER_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "control_center")
+LANDING_SITE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs")
 START_TIME = datetime.now(timezone.utc)
 REMINDER_CHECK_SECONDS = 15
 MAX_REMINDER_SECONDS = 60 * 60 * 24 * 30
@@ -889,6 +893,14 @@ def get_control_center_url() -> str:
     )
 
 
+def control_center_oauth_configured() -> bool:
+    return bool(
+        VANGUARD_CONTROL_CENTER_CLIENT_ID
+        and VANGUARD_CONTROL_CENTER_CLIENT_SECRET
+        and VANGUARD_CONTROL_CENTER_REDIRECT_URI
+    )
+
+
 def resolve_continental_user_sync(discord_user_id: int | str) -> dict[str, Any]:
     normalized_id = str(discord_user_id or "").strip()
     if not normalized_id:
@@ -1214,6 +1226,17 @@ async def require_mod_context(
     return guild, guild_cfg
 
 
+async def can_user_manage_control_center_guild(guild: discord.Guild, user_id: int) -> bool:
+    member = guild.get_member(user_id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(user_id)
+        except Exception:
+            return False
+    guild_cfg = get_guild_config(guild.id)
+    return has_mod_access(member, guild_cfg)
+
+
 async def set_lockdown_state(ctx: commands.Context, locked: bool) -> None:
     await safe_ctx_defer(ctx)
 
@@ -1460,8 +1483,8 @@ async def on_ready():
     ) and (license_loop_task is None or license_loop_task.done()):
         license_loop_task = asyncio.create_task(license_worker())
     if VANGUARD_CONTROL_CENTER_ENABLED and control_center_runner is None:
-        if not VANGUARD_CONTROL_CENTER_TOKEN:
-            print("[CONTROL] Control center not started: VANGUARD_CONTROL_CENTER_TOKEN is not set.")
+        if not control_center_oauth_configured() and not VANGUARD_CONTROL_CENTER_TOKEN:
+            print("[CONTROL] Control center not started: configure Discord OAuth or VANGUARD_CONTROL_CENTER_TOKEN.")
         else:
             try:
                 control_center_app = create_control_center_app(
@@ -1476,8 +1499,17 @@ async def on_ready():
                     modlog=modlog,
                     vote_store=vote_store,
                     parse_datetime_utc=parse_datetime_utc,
+                    http_request=http_request,
+                    can_access_guild=can_user_manage_control_center_guild,
+                    oauth_client_id=VANGUARD_CONTROL_CENTER_CLIENT_ID or str(bot.application_id or ""),
+                    oauth_client_secret=VANGUARD_CONTROL_CENTER_CLIENT_SECRET,
+                    oauth_redirect_uri=VANGUARD_CONTROL_CENTER_REDIRECT_URI,
+                    public_url=VANGUARD_CONTROL_CENTER_PUBLIC_URL,
+                    site_host=VANGUARD_CONTROL_CENTER_HOST,
+                    site_port=VANGUARD_CONTROL_CENTER_PORT,
                     control_token=VANGUARD_CONTROL_CENTER_TOKEN,
                     static_dir=CONTROL_CENTER_STATIC_DIR,
+                    landing_dir=LANDING_SITE_DIR,
                 )
                 control_center_runner = await start_control_center_site(
                     control_center_app,
@@ -1915,8 +1947,8 @@ async def status(ctx: commands.Context):
             if control_center_runner is not None
             else "CONFIGURED (waiting for bot ready)"
         )
-        if not VANGUARD_CONTROL_CENTER_TOKEN:
-            control_status = "MISCONFIGURED (missing token)"
+        if not control_center_oauth_configured() and not VANGUARD_CONTROL_CENTER_TOKEN:
+            control_status = "MISCONFIGURED (missing OAuth or operator token)"
     else:
         control_status = "DISABLED"
     checks.append(("Control Center", control_status))
@@ -1959,13 +1991,17 @@ async def controlcenter(ctx: commands.Context):
     if not VANGUARD_CONTROL_CENTER_ENABLED:
         await ctx.send("⚠️ Control center is disabled on this Vanguard instance.")
         return
-    if not VANGUARD_CONTROL_CENTER_TOKEN:
-        await ctx.send("⚠️ Control center token is missing. Set `VANGUARD_CONTROL_CENTER_TOKEN` in `.env`.")
+    if not control_center_oauth_configured() and not VANGUARD_CONTROL_CENTER_TOKEN:
+        await ctx.send(
+            "⚠️ Control center auth is not configured. Set Discord OAuth credentials or "
+            "`VANGUARD_CONTROL_CENTER_TOKEN` in `.env`."
+        )
         return
     await ctx.send(
         "Open the Vanguard control center here:\n"
         f"{get_control_center_url()}\n"
-        "Sign in with the configured control center token, then pick this server from the guild list."
+        "Sign in with Discord to manage only the servers you moderate. "
+        "The operator token still works as an override if it is configured."
     )
 
 

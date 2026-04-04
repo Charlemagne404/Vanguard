@@ -104,8 +104,15 @@ const PRESETS = {
   },
 };
 
+const CONTROL_BASE = "/control";
+const API_BASE = `${CONTROL_BASE}/api`;
+const AUTH_BASE = `${CONTROL_BASE}/auth`;
+
 const state = {
   token: localStorage.getItem("vanguard-control-token") || "",
+  authenticated: false,
+  mode: null,
+  user: null,
   guilds: [],
   selectedGuildId: null,
   detail: null,
@@ -152,6 +159,9 @@ const guardCheckboxFields = [
 
 const tokenInput = document.querySelector("#token-input");
 const authForm = document.querySelector("#auth-form");
+const authStatus = document.querySelector("#auth-status");
+const discordLogin = document.querySelector("#discord-login");
+const logoutButton = document.querySelector("#logout-button");
 const refreshButton = document.querySelector("#refresh-guilds");
 const guildList = document.querySelector("#guild-list");
 const emptyState = document.querySelector("#empty-state");
@@ -162,16 +172,47 @@ const guardPresetSelect = document.querySelector("#guard-preset-select");
 const presetHint = document.querySelector("#preset-hint");
 const toast = document.querySelector("#toast");
 
-if (state.token) {
-  tokenInput.value = state.token;
-  loadGuilds();
+tokenInput.value = state.token;
+bootstrap();
+
+async function bootstrap() {
+  await loadSession();
+  if (state.token || state.authenticated) {
+    await loadGuilds();
+  }
 }
 
 authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   state.token = tokenInput.value.trim();
   localStorage.setItem("vanguard-control-token", state.token);
+  await loadSession();
   await loadGuilds();
+});
+
+logoutButton.addEventListener("click", async () => {
+  try {
+    await fetch(`${AUTH_BASE}/logout`, {
+      method: "POST",
+      credentials: "same-origin",
+    });
+  } catch (error) {
+    showToast("Failed to log out cleanly.", "error");
+  }
+  state.authenticated = false;
+  state.user = null;
+  state.mode = null;
+  await loadSession();
+  if (state.token) {
+    await loadGuilds();
+    return;
+  }
+  state.guilds = [];
+  state.selectedGuildId = null;
+  state.detail = null;
+  renderGuildList();
+  dashboard.classList.add("hidden");
+  emptyState.classList.remove("hidden");
 });
 
 refreshButton.addEventListener("click", async () => {
@@ -201,7 +242,7 @@ settingsForm.addEventListener("submit", async (event) => {
     return;
   }
   try {
-    const detail = await api(`/api/guilds/${state.selectedGuildId}`, {
+    const detail = await api(`${API_BASE}/guilds/${state.selectedGuildId}`, {
       method: "PUT",
       body: JSON.stringify(buildPayload()),
     });
@@ -216,13 +257,19 @@ settingsForm.addEventListener("submit", async (event) => {
 });
 
 async function api(path, options = {}) {
+  const headers = {
+    ...(options.headers || {}),
+  };
+  if (state.token) {
+    headers["X-Vanguard-Control-Token"] = state.token;
+  }
+  if (options.body && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
   const response = await fetch(path, {
+    credentials: "same-origin",
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Vanguard-Control-Token": state.token,
-      ...(options.headers || {}),
-    },
+    headers,
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -237,13 +284,28 @@ async function api(path, options = {}) {
   return payload;
 }
 
+async function loadSession() {
+  try {
+    const payload = await api(`${API_BASE}/session`);
+    state.authenticated = Boolean(payload.authenticated);
+    state.mode = payload.mode || null;
+    state.user = payload.user || null;
+    renderAuthStatus(payload);
+  } catch (error) {
+    state.authenticated = false;
+    state.mode = null;
+    state.user = null;
+    renderAuthStatus({ authenticated: false, oauth_enabled: true, operator_token_enabled: Boolean(state.token) });
+  }
+}
+
 async function loadGuilds() {
-  if (!state.token) {
-    showToast("Enter the control center token first.", "error");
+  if (!state.token && !state.authenticated) {
+    showToast("Sign in with Discord or use the operator token first.", "error");
     return;
   }
   try {
-    const payload = await api("/api/guilds");
+    const payload = await api(`${API_BASE}/guilds`);
     state.guilds = payload.guilds || [];
     renderGuildList();
     const hashGuildId = window.location.hash.replace("#guild-", "");
@@ -263,6 +325,7 @@ async function loadGuilds() {
     renderGuildList();
     dashboard.classList.add("hidden");
     emptyState.classList.remove("hidden");
+    await loadSession();
     showToast(error.message || "Failed to load guilds.", "error");
   }
 }
@@ -294,7 +357,7 @@ async function selectGuild(guildId) {
   state.selectedGuildId = guildId;
   renderGuildList();
   try {
-    const detail = await api(`/api/guilds/${guildId}`);
+    const detail = await api(`${API_BASE}/guilds/${guildId}`);
     state.detail = detail;
     window.location.hash = `guild-${guildId}`;
     renderDetail(detail);
@@ -456,6 +519,28 @@ function syncGuildSummary(detail) {
     active_votes: detail.active_votes,
     runtime_stats: detail.runtime_stats,
   };
+}
+
+function renderAuthStatus(session) {
+  if (state.mode === "operator") {
+    authStatus.textContent = "Operator token override active. You can access every guild on this Vanguard instance.";
+    logoutButton.classList.add("hidden");
+    discordLogin.classList.remove("hidden");
+    return;
+  }
+  if (state.authenticated && state.user) {
+    authStatus.textContent = `Signed in as ${state.user.name}. Only guilds you can moderate are shown.`;
+    logoutButton.classList.remove("hidden");
+    discordLogin.classList.add("hidden");
+    return;
+  }
+  if (session && session.oauth_enabled === false) {
+    authStatus.textContent = "Discord sign-in is not configured on this instance.";
+  } else {
+    authStatus.textContent = "Not signed in.";
+  }
+  logoutButton.classList.add("hidden");
+  discordLogin.classList.toggle("hidden", session && session.oauth_enabled === false);
 }
 
 function formatTimestamp(value) {

@@ -14,8 +14,8 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css" />
-    <script src="/static/script.js" defer></script>
+    <link rel="stylesheet" href="/control/static/styles.css" />
+    <script src="/control/static/script.js" defer></script>
   </head>
   <body>
     <div class="page-shell">
@@ -24,20 +24,32 @@
           <p class="eyebrow">Control Center</p>
           <h1>Vanguard server operations</h1>
         </div>
-        <form id="auth-form" class="auth-card">
-          <label class="field-label" for="token-input">Control token</label>
-          <div class="auth-row">
-            <input
-              id="token-input"
-              name="token"
-              type="password"
-              placeholder="Paste VANGUARD_CONTROL_CENTER_TOKEN"
-              autocomplete="current-password"
-            />
-            <button type="submit" class="primary-btn">Connect</button>
+        <section class="auth-card">
+          <div class="auth-stack">
+            <div>
+              <label class="field-label">Discord access</label>
+              <p id="auth-status" class="field-help">Not signed in.</p>
+            </div>
+            <div class="auth-row">
+              <a id="discord-login" class="primary-btn" href="/control/auth/login">Sign in with Discord</a>
+              <button id="logout-button" type="button" class="ghost-btn hidden">Log out</button>
+            </div>
           </div>
-          <p class="field-help">Stored locally in this browser only.</p>
-        </form>
+          <form id="auth-form" class="operator-form">
+            <label class="field-label" for="token-input">Operator token override</label>
+            <div class="auth-row">
+              <input
+                id="token-input"
+                name="token"
+                type="password"
+                placeholder="Optional: VANGUARD_CONTROL_CENTER_TOKEN"
+                autocomplete="current-password"
+              />
+              <button type="submit" class="ghost-btn">Use token</button>
+            </div>
+            <p class="field-help">Stored locally in this browser only. Most users should sign in with Discord.</p>
+          </form>
+        </section>
       </header>
 
       <div class="workspace">
@@ -55,10 +67,10 @@
         <main class="main-panel">
           <section id="empty-state" class="empty-state">
             <p class="eyebrow">Awaiting Access</p>
-            <h2>Connect to the bot first.</h2>
+            <h2>Sign in to manage your server.</h2>
             <p>
-              Enter the control center token, load the guild list, and choose the server you
-              want to tune.
+              Use Discord login to load only the Vanguard servers you can moderate. The operator
+              token field is only for instance-wide admin access.
             </p>
           </section>
 
