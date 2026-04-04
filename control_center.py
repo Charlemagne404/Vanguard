@@ -512,7 +512,7 @@ def create_control_center_app(
     *,
     bot: discord.Client,
     get_guild_config: Callable[[int], dict[str, Any]],
-    save_settings: Callable[[], None],
+    save_settings: Callable[[], bool | None],
     normalize_guard_settings: Callable[[Any], dict[str, Any]],
     resolve_guard_preset_name: Callable[[str | None], str | None],
     apply_guard_preset: Callable[[dict[str, Any], str], bool],
@@ -873,7 +873,12 @@ def create_control_center_app(
         if errors:
             return web.json_response({"errors": errors}, status=400)
 
-        save_settings()
+        save_result = save_settings()
+        if save_result is False:
+            return web.json_response(
+                {"error": "Settings could not be persisted on this Vanguard instance."},
+                status=500,
+            )
         license_state = current_license_state()
         response_payload = build_guild_detail(
             guild,

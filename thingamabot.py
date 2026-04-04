@@ -449,11 +449,13 @@ def load_settings() -> dict[str, Any]:
 settings = load_settings()
 
 
-def save_settings() -> None:
+def save_settings() -> bool:
     try:
         write_json_atomic(SETTINGS_FILE, settings)
     except OSError as exc:
         print(f"[FILE] Failed saving settings: {exc}")
+        return False
+    return True
 
 
 def get_guild_config(guild_id: int) -> dict[str, Any]:

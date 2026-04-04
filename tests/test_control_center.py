@@ -1,10 +1,14 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+
+from aiohttp.test_utils import TestClient, TestServer
 
 from control_center import (
     apply_guild_control_update,
     build_guild_authorization,
     build_control_center_url,
+    create_control_center_app,
     build_guild_detail,
     build_guild_overview,
     serialize_continental_account_user,
@@ -64,6 +68,21 @@ class FakeGuild:
 
     def get_role(self, role_id: int):
         return next((role for role in self.roles if role.id == role_id), None)
+
+    def get_member(self, user_id: int):
+        return None
+
+    async def fetch_member(self, user_id: int):
+        raise RuntimeError("not needed in tests")
+
+
+class FakeBot:
+    def __init__(self, guilds):
+        self.guilds = guilds
+        self.user = SimpleNamespace(name="Vanguard", id=999)
+
+    def get_guild(self, guild_id: int):
+        return next((guild for guild in self.guilds if guild.id == guild_id), None)
 
 
 def default_guild_config():
@@ -256,6 +275,88 @@ def test_serialize_continental_status_flattens_resolve_payload():
     assert payload["flags"]["trusted"] is True
     assert payload["flags"]["flagged"] is True
     assert payload["flags"]["flag_reason"] == "manual review"
+
+
+def test_control_center_update_surfaces_persistence_failures():
+    async def scenario():
+        guild = FakeGuild()
+        bot = FakeBot([guild])
+        guild_cfg = default_guild_config()
+
+        app = create_control_center_app(
+            bot=bot,
+            get_guild_config=lambda guild_id: guild_cfg,
+            save_settings=lambda: False,
+            normalize_guard_settings=normalize_guard_settings,
+            resolve_guard_preset_name=resolve_guard_preset_name,
+            apply_guard_preset=apply_guard_preset,
+            guard_runtime_stats={},
+            reminders=[],
+            modlog={},
+            vote_store={},
+            parse_datetime_utc=parse_datetime,
+            http_request=lambda *args, **kwargs: None,
+            can_access_guild=_allow_access,
+            fetch_continental_profile=_fetch_continental_profile,
+            get_license_state=lambda: None,
+            continental_login_url="https://continental.example/login",
+            continental_dashboard_url="https://continental.example/dashboard",
+            public_url="",
+            site_host="127.0.0.1",
+            site_port=8080,
+            static_dir="control_center",
+            landing_dir="website",
+        )
+
+        server = TestServer(app)
+        client = TestClient(server)
+        await client.start_server()
+        try:
+            auth_response = await client.post(
+                "/control/api/session/exchange",
+                json={"accessToken": "token"},
+            )
+            assert auth_response.status == 200
+
+            update_response = await client.put(
+                "/control/api/guilds/123",
+                json={"welcome_message": "Updated"},
+            )
+            assert update_response.status == 500
+            payload = await update_response.json()
+            assert payload == {
+                "error": "Settings could not be persisted on this Vanguard instance."
+            }
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+async def _allow_access(guild, user_id: int) -> bool:
+    return guild.id == 123 and user_id == 555
+
+
+def _fetch_continental_profile(access_token: str):
+    assert access_token == "token"
+    return {
+        "ok": True,
+        "user": {
+            "continentalId": "continental-user",
+            "username": "linked.user",
+            "displayName": "Linked User",
+            "isVerified": True,
+            "vanguard": {
+                "linkedDiscord": True,
+                "discordUserId": "555",
+            },
+            "oauthProviders": {
+                "discord": {
+                    "username": "discord-user",
+                }
+            },
+        },
+    }
 
 
 def test_serialize_license_state_and_guild_authorization():
