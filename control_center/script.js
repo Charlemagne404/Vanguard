@@ -109,6 +109,33 @@ const API_BASE = `${CONTROL_BASE}/api`;
 const AUTH_BASE = `${CONTROL_BASE}/auth`;
 const POPUP_NAME = "continental-id-login";
 const POPUP_FEATURES = "popup=yes,width=520,height=760";
+const UI_GUARD_DEFAULTS = {
+  guard_enabled: false,
+  guard_threshold: 8,
+  guard_window_seconds: 30,
+  guard_new_account_hours: 24,
+  guard_slowmode_seconds: 30,
+  guard_cooldown_seconds: 300,
+  guard_slowmode_scope: "trigger",
+  guard_max_slowmode_channels: 3,
+  guard_critical_slowmode_seconds: 120,
+  guard_timeout_seconds: 0,
+  guard_delete_trigger_message: false,
+  guard_join_threshold: 6,
+  guard_join_window_seconds: 45,
+  guard_mention_per_message: 6,
+  guard_mention_burst_threshold: 3,
+  guard_mention_window_seconds: 20,
+  guard_duplicate_threshold: 4,
+  guard_duplicate_window_seconds: 25,
+  guard_duplicate_min_chars: 12,
+  guard_link_threshold: 5,
+  guard_link_window_seconds: 45,
+  guard_detect_joins: true,
+  guard_detect_mentions: true,
+  guard_detect_duplicates: true,
+  guard_detect_links: true,
+};
 
 const state = {
   authenticated: false,
@@ -122,6 +149,7 @@ const state = {
   guilds: [],
   selectedGuildId: null,
   detail: null,
+  guildRequestToken: 0,
 };
 
 const fieldIds = {
@@ -261,16 +289,19 @@ settingsForm.addEventListener("submit", async (event) => {
     return;
   }
   try {
-    const detail = await api(`${API_BASE}/guilds/${state.selectedGuildId}`, {
+    const detail = normalizeGuildDetail(await api(`${API_BASE}/guilds/${state.selectedGuildId}`, {
       method: "PUT",
       body: JSON.stringify(buildPayload()),
-    });
+    }));
     state.detail = detail;
     syncGuildSummary(detail);
     renderGuildList();
     renderDetail(detail);
     showToast("Settings saved.", "success");
   } catch (error) {
+    if (/Unauthorized|HTTP 401/i.test(String(error.message || ""))) {
+      await loadSession();
+    }
     showToast(error.message || "Failed to save settings.", "error");
   }
 });
@@ -282,11 +313,16 @@ async function api(path, options = {}) {
   if (options.body && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    ...options,
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      credentials: "same-origin",
+      ...options,
+      headers,
+    });
+  } catch (error) {
+    throw new Error("Network request failed.");
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (payload.errors) {
@@ -336,25 +372,35 @@ async function loadGuilds() {
   }
   try {
     const payload = await api(`${API_BASE}/guilds`);
-    state.guilds = payload.guilds || [];
+    state.guilds = Array.isArray(payload.guilds)
+      ? payload.guilds.map(normalizeGuildSummary).filter(Boolean)
+      : [];
     state.license = payload.license || state.license;
     renderIntegrationSummary();
     renderGuildList();
     const hashGuildId = window.location.hash.replace("#guild-", "");
+    const currentGuildId = state.guilds.find(
+      (guild) => String(guild.id) === String(state.selectedGuildId)
+    )?.id;
     const preferredGuildId =
       state.guilds.find((guild) => String(guild.id) === hashGuildId)?.id ||
-      state.selectedGuildId ||
+      currentGuildId ||
       state.guilds[0]?.id ||
       null;
     if (preferredGuildId) {
       await selectGuild(preferredGuildId);
     } else {
+      state.selectedGuildId = null;
+      state.detail = null;
+      window.location.hash = "";
       dashboard.classList.add("hidden");
       emptyState.classList.remove("hidden");
       renderDashboardNotice(null);
     }
   } catch (error) {
     state.guilds = [];
+    state.selectedGuildId = null;
+    state.detail = null;
     renderGuildList();
     dashboard.classList.add("hidden");
     emptyState.classList.remove("hidden");
@@ -393,16 +439,40 @@ function renderGuildList() {
 }
 
 async function selectGuild(guildId) {
-  state.selectedGuildId = guildId;
+  const normalizedGuildId = String(guildId);
+  const previousSelectedGuildId = state.selectedGuildId;
+  const previousDetail = state.detail;
+  const requestToken = ++state.guildRequestToken;
+  state.selectedGuildId = normalizedGuildId;
   renderGuildList();
   try {
-    const detail = await api(`${API_BASE}/guilds/${guildId}`);
+    const detail = normalizeGuildDetail(await api(`${API_BASE}/guilds/${normalizedGuildId}`));
+    if (requestToken !== state.guildRequestToken) {
+      return;
+    }
     state.detail = detail;
-    window.location.hash = `guild-${guildId}`;
+    window.location.hash = `guild-${detail.id}`;
     renderDetail(detail);
   } catch (error) {
+    if (requestToken !== state.guildRequestToken) {
+      return;
+    }
+    const recoveryApplied = shouldRecoverMissingGuild(error)
+      ? recoverFromMissingGuild(normalizedGuildId, previousDetail)
+      : false;
+    if (!recoveryApplied) {
+      state.selectedGuildId = previousSelectedGuildId || null;
+      renderGuildList();
+    }
+    if (/Unauthorized|HTTP 401/i.test(String(error.message || ""))) {
+      await loadSession();
+    }
     showToast(error.message || "Failed to load guild detail.", "error");
   }
+}
+
+function shouldRecoverMissingGuild(error) {
+  return /Guild not found|Forbidden|HTTP 403|HTTP 404/i.test(String(error?.message || ""));
 }
 
 function renderDetail(detail) {
@@ -491,6 +561,7 @@ function populateSelect(elementId, items, emptyLabel) {
 function populateModRoles(roles, selectedRoleIds) {
   const container = document.querySelector("#mod-role-grid");
   container.innerHTML = "";
+  const selected = new Set((selectedRoleIds || []).map((roleId) => String(roleId)));
   for (const role of roles) {
     const label = document.createElement("label");
     label.className = "role-option";
@@ -499,7 +570,7 @@ function populateModRoles(roles, selectedRoleIds) {
       <span>${escapeHtml(role.name)}</span>
     `;
     const input = label.querySelector("input");
-    input.checked = selectedRoleIds.includes(role.id);
+    input.checked = selected.has(String(role.id));
     container.appendChild(label);
   }
 }
@@ -512,9 +583,7 @@ function buildPayload() {
     ops_channel_id: readOptionalSelect("ops-channel"),
     log_channel_id: readOptionalSelect("log-channel"),
     lockdown_role_id: readOptionalSelect("lockdown-role"),
-    mod_role_ids: [...document.querySelectorAll("#mod-role-grid input:checked")].map((input) =>
-      Number(input.value)
-    ),
+    mod_role_ids: [...document.querySelectorAll("#mod-role-grid input:checked")].map((input) => input.value),
     guard_preset: guardPresetSelect.value,
     guard: {
       guard_slowmode_scope: document.querySelector("#guard-slowmode-scope").value,
@@ -550,7 +619,7 @@ function applyPresetToForm(presetName) {
 
 function readOptionalSelect(elementId) {
   const raw = document.querySelector(`#${elementId}`).value;
-  return raw ? Number(raw) : null;
+  return raw || null;
 }
 
 function syncGuildSummary(detail) {
@@ -566,6 +635,186 @@ function syncGuildSummary(detail) {
     pending_reminders: detail.pending_reminders,
     active_votes: detail.active_votes,
     runtime_stats: detail.runtime_stats,
+    authorization: detail.authorization || state.guilds[index].authorization,
+  };
+}
+
+function recoverFromMissingGuild(guildId, previousDetail) {
+  const beforeCount = state.guilds.length;
+  state.guilds = state.guilds.filter((guild) => String(guild.id) !== String(guildId));
+  if (state.guilds.length === beforeCount) {
+    return false;
+  }
+
+  const previousGuildStillAvailable =
+    previousDetail &&
+    state.guilds.find((guild) => String(guild.id) === String(previousDetail.id));
+  if (previousGuildStillAvailable) {
+    state.selectedGuildId = String(previousDetail.id);
+    state.detail = previousDetail;
+    renderGuildList();
+    renderDetail(previousDetail);
+  } else if (state.guilds.length) {
+    state.selectedGuildId = String(state.guilds[0].id);
+    state.detail = null;
+    renderGuildList();
+    window.setTimeout(() => {
+      selectGuild(state.selectedGuildId);
+    }, 0);
+  } else {
+    state.selectedGuildId = null;
+    state.detail = null;
+    renderGuildList();
+    window.location.hash = "";
+    dashboard.classList.add("hidden");
+    emptyState.classList.remove("hidden");
+    renderDashboardNotice(null);
+  }
+  return true;
+}
+
+function toFiniteNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeSnowflake(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  return String(value);
+}
+
+function normalizeSnowflakeList(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  const seen = new Set();
+  const normalized = [];
+  for (const value of values) {
+    const snowflake = normalizeSnowflake(value);
+    if (!snowflake || seen.has(snowflake)) {
+      continue;
+    }
+    seen.add(snowflake);
+    normalized.push(snowflake);
+  }
+  return normalized;
+}
+
+function normalizeRuntimeStats(runtimeStats) {
+  const stats = runtimeStats && typeof runtimeStats === "object" ? runtimeStats : {};
+  return {
+    triggers_total: toFiniteNumber(stats.triggers_total, 0),
+    suppressed_total: toFiniteNumber(stats.suppressed_total, 0),
+    last_trigger_at: stats.last_trigger_at || null,
+    last_trigger_reasons: Array.isArray(stats.last_trigger_reasons) ? stats.last_trigger_reasons : [],
+    last_trigger_severity: String(stats.last_trigger_severity || "none"),
+    last_trigger_actor_id: normalizeSnowflake(stats.last_trigger_actor_id),
+  };
+}
+
+function normalizeAuthorization(authorization) {
+  const normalized = authorization && typeof authorization === "object" ? authorization : {};
+  return {
+    authorized: normalized.authorized !== false,
+    source: String(normalized.source || "default"),
+    reason: String(normalized.reason || ""),
+  };
+}
+
+function normalizeGuardSettings(guard) {
+  const normalized = {
+    ...UI_GUARD_DEFAULTS,
+  };
+  const source = guard && typeof guard === "object" ? guard : {};
+  for (const [key] of guardNumberFields) {
+    normalized[key] = toFiniteNumber(source[key], normalized[key]);
+  }
+  for (const [key] of guardCheckboxFields) {
+    normalized[key] = Boolean(source[key]);
+  }
+  normalized.guard_slowmode_scope =
+    source.guard_slowmode_scope === "active" ? "active" : UI_GUARD_DEFAULTS.guard_slowmode_scope;
+  return normalized;
+}
+
+function normalizeGuildSummary(guild) {
+  if (!guild || typeof guild !== "object") {
+    return null;
+  }
+  const guildId = normalizeSnowflake(guild.id);
+  if (!guildId) {
+    return null;
+  }
+  return {
+    id: guildId,
+    name: String(guild.name || "Server"),
+    icon_url: guild.icon_url || null,
+    member_count: toFiniteNumber(guild.member_count, 0),
+    guard_enabled: Boolean(guild.guard_enabled),
+    guard_preset: String(guild.guard_preset || "custom"),
+    active_votes: toFiniteNumber(guild.active_votes, 0),
+    pending_reminders: toFiniteNumber(guild.pending_reminders, 0),
+    recent_cases_24h: toFiniteNumber(guild.recent_cases_24h, 0),
+    runtime_stats: normalizeRuntimeStats(guild.runtime_stats),
+    authorization: normalizeAuthorization(guild.authorization),
+  };
+}
+
+function normalizeGuildDetail(detail) {
+  const summary = normalizeGuildSummary(detail);
+  if (!summary) {
+    throw new Error("Invalid guild detail payload.");
+  }
+  const settings = detail.settings && typeof detail.settings === "object" ? detail.settings : {};
+  return {
+    ...summary,
+    license: detail.license || null,
+    channels: Array.isArray(detail.channels)
+      ? detail.channels
+          .map((channel) => {
+            const channelId = normalizeSnowflake(channel && channel.id);
+            if (!channelId) {
+              return null;
+            }
+            return {
+              id: channelId,
+              name: String(channel.name || "unknown"),
+              mention: String(channel.mention || `<#${channelId}>`),
+              position: toFiniteNumber(channel.position, 0),
+            };
+          })
+          .filter(Boolean)
+      : [],
+    roles: Array.isArray(detail.roles)
+      ? detail.roles
+          .map((role) => {
+            const roleId = normalizeSnowflake(role && role.id);
+            if (!roleId) {
+              return null;
+            }
+            return {
+              id: roleId,
+              name: String(role.name || "unknown"),
+              mention: String(role.mention || `<@&${roleId}>`),
+              position: toFiniteNumber(role.position, 0),
+              color: toFiniteNumber(role.color, 0),
+            };
+          })
+          .filter(Boolean)
+      : [],
+    settings: {
+      welcome_channel_id: normalizeSnowflake(settings.welcome_channel_id),
+      welcome_role_id: normalizeSnowflake(settings.welcome_role_id),
+      welcome_message: String(settings.welcome_message || ""),
+      ops_channel_id: normalizeSnowflake(settings.ops_channel_id),
+      log_channel_id: normalizeSnowflake(settings.log_channel_id),
+      lockdown_role_id: normalizeSnowflake(settings.lockdown_role_id),
+      mod_role_ids: normalizeSnowflakeList(settings.mod_role_ids),
+      guard_preset: String(settings.guard_preset || "custom"),
+      guard: normalizeGuardSettings(settings.guard),
+    },
   };
 }
 

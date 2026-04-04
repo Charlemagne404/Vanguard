@@ -145,6 +145,35 @@ def test_apply_guild_control_update_applies_live_server_values():
     assert guild_cfg["guard_detect_links"] is False
 
 
+def test_apply_guild_control_update_accepts_string_snowflakes():
+    guild = FakeGuild()
+    guild_cfg = default_guild_config()
+
+    errors = apply_guild_control_update(
+        guild,
+        guild_cfg,
+        {
+            "welcome_channel_id": "10",
+            "welcome_role_id": "20",
+            "ops_channel_id": "11",
+            "log_channel_id": "12",
+            "lockdown_role_id": "22",
+            "mod_role_ids": ["21", "22"],
+        },
+        normalize_guard_settings=normalize_guard_settings,
+        resolve_guard_preset_name=resolve_guard_preset_name,
+        apply_guard_preset=apply_guard_preset,
+    )
+
+    assert errors == {}
+    assert guild_cfg["welcome_channel_id"] == 10
+    assert guild_cfg["welcome_role_id"] == 20
+    assert guild_cfg["ops_channel_id"] == 11
+    assert guild_cfg["log_channel_id"] == 12
+    assert guild_cfg["lockdown_role_id"] == 22
+    assert guild_cfg["mod_role_ids"] == [21, 22]
+
+
 def test_apply_guild_control_update_rejects_invalid_references():
     guild = FakeGuild()
     guild_cfg = default_guild_config()
@@ -223,11 +252,42 @@ def test_build_guild_detail_reports_counts_and_settings():
     assert overview["pending_reminders"] == 1
     assert overview["recent_cases_24h"] == 1
     assert overview["guard_preset"] == "balanced"
-    assert detail["settings"]["welcome_channel_id"] == 10
-    assert detail["settings"]["mod_role_ids"] == [21]
+    assert detail["id"] == "123"
+    assert detail["settings"]["welcome_channel_id"] == "10"
+    assert detail["settings"]["mod_role_ids"] == ["21"]
     assert detail["settings"]["guard_preset"] == "balanced"
     assert len(detail["channels"]) == 3
     assert len(detail["roles"]) == 3
+
+
+def test_build_guild_detail_serializes_large_ids_as_strings():
+    guild = FakeGuild()
+    guild.id = 1417156603974779000
+    guild.text_channels[0].id = 1409501007880257800
+    guild.roles[1].id = 1411111111111111111
+
+    guild_cfg = default_guild_config()
+    guild_cfg["welcome_channel_id"] = guild.text_channels[0].id
+    guild_cfg["welcome_role_id"] = guild.roles[1].id
+    guild_cfg["mod_role_ids"] = [guild.roles[1].id]
+
+    detail = build_guild_detail(
+        guild,
+        guild_cfg,
+        guard_runtime_stats={},
+        reminders=[],
+        modlog={},
+        vote_store={},
+        parse_datetime_utc=parse_datetime,
+        normalize_guard_settings=normalize_guard_settings,
+    )
+
+    assert detail["id"] == "1417156603974779000"
+    assert detail["channels"][0]["id"] == "1409501007880257800"
+    assert any(role["id"] == "1411111111111111111" for role in detail["roles"])
+    assert detail["settings"]["welcome_channel_id"] == "1409501007880257800"
+    assert detail["settings"]["welcome_role_id"] == "1411111111111111111"
+    assert detail["settings"]["mod_role_ids"] == ["1411111111111111111"]
 
 
 def test_build_control_center_url_appends_control_path_once():

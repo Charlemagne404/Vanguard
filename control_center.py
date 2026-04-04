@@ -48,6 +48,25 @@ def _coerce_optional_int(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _serialize_snowflake(value: Any) -> str | None:
+    snowflake = _coerce_optional_int(value)
+    return str(snowflake) if snowflake is not None else None
+
+
+def _serialize_snowflake_list(values: Any) -> list[str]:
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        return []
+    serialized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        snowflake = _serialize_snowflake(value)
+        if snowflake is None or snowflake in seen:
+            continue
+        seen.add(snowflake)
+        serialized.append(snowflake)
+    return serialized
+
+
 def _coerce_role_id_list(value: Any) -> list[int] | None:
     if value is None or value == "" or value == "null":
         return []
@@ -78,7 +97,7 @@ def _safe_icon_url(guild: discord.Guild) -> str | None:
 
 def _serialize_channel(channel: Any) -> dict[str, Any]:
     return {
-        "id": int(getattr(channel, "id")),
+        "id": str(int(getattr(channel, "id"))),
         "name": str(getattr(channel, "name", "unknown")),
         "mention": str(getattr(channel, "mention", f"<#{getattr(channel, 'id', 0)}>")),
         "position": int(getattr(channel, "position", 0)),
@@ -89,7 +108,7 @@ def _serialize_role(role: Any) -> dict[str, Any]:
     color = getattr(role, "color", None)
     color_value = getattr(color, "value", 0)
     return {
-        "id": int(getattr(role, "id")),
+        "id": str(int(getattr(role, "id"))),
         "name": str(getattr(role, "name", "unknown")),
         "mention": str(getattr(role, "mention", f"<@&{getattr(role, 'id', 0)}>")),
         "position": int(getattr(role, "position", 0)),
@@ -123,7 +142,7 @@ def _serialize_runtime_stats(raw_stats: Mapping[str, Any] | None) -> dict[str, A
         "last_trigger_at": last_trigger_text,
         "last_trigger_reasons": list(stats.get("last_trigger_reasons", []) or []),
         "last_trigger_severity": str(stats.get("last_trigger_severity") or "none"),
-        "last_trigger_actor_id": _coerce_optional_int(stats.get("last_trigger_actor_id")),
+        "last_trigger_actor_id": _serialize_snowflake(stats.get("last_trigger_actor_id")),
     }
 
 
@@ -175,7 +194,7 @@ def build_guild_overview(
 ) -> dict[str, Any]:
     runtime_stats = _serialize_runtime_stats(guard_runtime_stats.get(guild.id))
     return {
-        "id": guild.id,
+        "id": str(guild.id),
         "name": guild.name,
         "icon_url": _safe_icon_url(guild),
         "member_count": int(getattr(guild, "member_count", 0) or 0),
@@ -228,13 +247,13 @@ def build_guild_detail(
     ]
     detail = dict(overview)
     detail["settings"] = {
-        "welcome_channel_id": _coerce_optional_int(guild_cfg.get("welcome_channel_id")),
-        "welcome_role_id": _coerce_optional_int(guild_cfg.get("welcome_role_id")),
+        "welcome_channel_id": _serialize_snowflake(guild_cfg.get("welcome_channel_id")),
+        "welcome_role_id": _serialize_snowflake(guild_cfg.get("welcome_role_id")),
         "welcome_message": str(guild_cfg.get("welcome_message") or ""),
-        "ops_channel_id": _coerce_optional_int(guild_cfg.get("ops_channel_id")),
-        "log_channel_id": _coerce_optional_int(guild_cfg.get("log_channel_id")),
-        "lockdown_role_id": _coerce_optional_int(guild_cfg.get("lockdown_role_id")),
-        "mod_role_ids": list(guild_cfg.get("mod_role_ids", []) or []),
+        "ops_channel_id": _serialize_snowflake(guild_cfg.get("ops_channel_id")),
+        "log_channel_id": _serialize_snowflake(guild_cfg.get("log_channel_id")),
+        "lockdown_role_id": _serialize_snowflake(guild_cfg.get("lockdown_role_id")),
+        "mod_role_ids": _serialize_snowflake_list(guild_cfg.get("mod_role_ids", [])),
         "guard_preset": _match_guard_preset_name(normalized_guard),
         "guard": normalized_guard,
     }
