@@ -82,6 +82,11 @@ Environment variables are read from `.env` (via `python-dotenv`) or your shell.
 - `VANGUARD_LICENSE_KEY` (optional bearer token for license verification)
 - `VANGUARD_REQUIRE_LICENSE` (default: `false`; when `true`, commands are blocked if license check fails)
 - `VANGUARD_LICENSE_RECHECK_SECONDS` (default: `900`, range: `60..86400`)
+- `VANGUARD_CONTROL_CENTER_ENABLED` (default: `false`; starts the web dashboard inside the bot process)
+- `VANGUARD_CONTROL_CENTER_HOST` (default: `127.0.0.1`)
+- `VANGUARD_CONTROL_CENTER_PORT` (default: `8080`)
+- `VANGUARD_CONTROL_CENTER_TOKEN` (required when the control center is enabled; sent by the dashboard as an auth header)
+- `VANGUARD_CONTROL_CENTER_PUBLIC_URL` (optional URL advertised by `/controlcenter`; useful when the bot is reverse-proxied)
 - `PRIVACY_POLICY_URL` (optional)
 - `TERMS_OF_SERVICE_URL` (optional)
 - `VANGUARD_DATA_DIR` (default: `./data`)
@@ -104,6 +109,28 @@ Runtime JSON state is stored in `data/`:
 - `data/votes.json`
 
 On startup, legacy root files are migrated into `data/` automatically when possible.
+
+## Control Center
+
+Vanguard now includes an embedded control center website for per-server configuration.
+
+1. Set these values in `.env`:
+
+```bash
+VANGUARD_CONTROL_CENTER_ENABLED=true
+VANGUARD_CONTROL_CENTER_TOKEN=choose-a-long-random-token
+VANGUARD_CONTROL_CENTER_HOST=127.0.0.1
+VANGUARD_CONTROL_CENTER_PORT=8080
+```
+
+2. Start the bot and open `http://127.0.0.1:8080`.
+3. Paste the configured control token into the dashboard login box.
+4. Pick a guild and update:
+   - welcome channel, welcome role, and welcome message
+   - ops/log channels, lockdown role, and extra mod roles
+   - guard presets plus advanced anti-raid thresholds
+
+The `/controlcenter` command shows the configured dashboard URL to moderators. By default the site binds to localhost; if you expose it behind a reverse proxy, set `VANGUARD_CONTROL_CENTER_PUBLIC_URL` and keep the token secret.
 
 ## Testing and Linting
 

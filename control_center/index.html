@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vanguard Control Center</title>
+    <meta
+      name="description"
+      content="Configure Vanguard behavior for every Discord server from one control center."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="/static/script.js" defer></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Control Center</p>
+          <h1>Vanguard server operations</h1>
+        </div>
+        <form id="auth-form" class="auth-card">
+          <label class="field-label" for="token-input">Control token</label>
+          <div class="auth-row">
+            <input
+              id="token-input"
+              name="token"
+              type="password"
+              placeholder="Paste VANGUARD_CONTROL_CENTER_TOKEN"
+              autocomplete="current-password"
+            />
+            <button type="submit" class="primary-btn">Connect</button>
+          </div>
+          <p class="field-help">Stored locally in this browser only.</p>
+        </form>
+      </header>
+
+      <div class="workspace">
+        <aside class="guild-rail">
+          <div class="rail-header">
+            <div>
+              <p class="eyebrow">Servers</p>
+              <h2>Guilds</h2>
+            </div>
+            <button id="refresh-guilds" class="ghost-btn" type="button">Refresh</button>
+          </div>
+          <div id="guild-list" class="guild-list"></div>
+        </aside>
+
+        <main class="main-panel">
+          <section id="empty-state" class="empty-state">
+            <p class="eyebrow">Awaiting Access</p>
+            <h2>Connect to the bot first.</h2>
+            <p>
+              Enter the control center token, load the guild list, and choose the server you
+              want to tune.
+            </p>
+          </section>
+
+          <section id="dashboard" class="dashboard hidden">
+            <div class="hero-panel">
+              <div class="hero-copy">
+                <p class="eyebrow">Live Target</p>
+                <h2 id="guild-name">Server</h2>
+                <p id="guild-meta" class="hero-meta"></p>
+              </div>
+              <div class="hero-status">
+                <div class="status-pill">
+                  <span class="status-label">Guard preset</span>
+                  <strong id="guard-preset-badge">custom</strong>
+                </div>
+                <div class="status-pill">
+                  <span class="status-label">Last trigger</span>
+                  <strong id="last-trigger-badge">Never</strong>
+                </div>
+              </div>
+            </div>
+
+            <section class="stats-grid">
+              <article class="stat-card">
+                <span>Members</span>
+                <strong id="stat-members">0</strong>
+              </article>
+              <article class="stat-card">
+                <span>Active votes</span>
+                <strong id="stat-votes">0</strong>
+              </article>
+              <article class="stat-card">
+                <span>Pending reminders</span>
+                <strong id="stat-reminders">0</strong>
+              </article>
+              <article class="stat-card">
+                <span>Cases (24h)</span>
+                <strong id="stat-cases">0</strong>
+              </article>
+              <article class="stat-card">
+                <span>Guard triggers</span>
+                <strong id="stat-triggers">0</strong>
+              </article>
+              <article class="stat-card">
+                <span>Suppressed triggers</span>
+                <strong id="stat-suppressed">0</strong>
+              </article>
+            </section>
+
+            <form id="settings-form" class="settings-form">
+              <div class="action-bar">
+                <div>
+                  <p class="eyebrow">Workflow</p>
+                  <h3>Apply changes and persist them immediately.</h3>
+                </div>
+                <div class="action-row">
+                  <button id="reset-form" type="button" class="ghost-btn">Reset</button>
+                  <button type="submit" class="primary-btn">Save changes</button>
+                </div>
+              </div>
+
+              <section class="panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Guard Profile</p>
+                    <h3>Choose the baseline posture.</h3>
+                  </div>
+                  <select id="guard-preset-select" class="preset-select">
+                    <option value="off">Off</option>
+                    <option value="relaxed">Relaxed</option>
+                    <option value="balanced">Balanced</option>
+                    <option value="strict">Strict</option>
+                    <option value="siege">Siege</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </div>
+                <div class="preset-hint" id="preset-hint">
+                  Presets update the guard form below before you save.
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Welcome Flow</p>
+                    <h3>Join experience and role handoff.</h3>
+                  </div>
+                </div>
+                <div class="field-grid">
+                  <label class="field">
+                    <span class="field-label">Welcome channel</span>
+                    <select id="welcome-channel"></select>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Welcome role</span>
+                    <select id="welcome-role"></select>
+                  </label>
+                </div>
+                <label class="field">
+                  <span class="field-label">Welcome message</span>
+                  <textarea
+                    id="welcome-message"
+                    rows="4"
+                    placeholder="Use {user}, {username}, and {server} placeholders."
+                  ></textarea>
+                </label>
+              </section>
+
+              <section class="panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Operations Routing</p>
+                    <h3>Logging, ops visibility, and lockdown scope.</h3>
+                  </div>
+                </div>
+                <div class="field-grid three-up">
+                  <label class="field">
+                    <span class="field-label">Ops channel</span>
+                    <select id="ops-channel"></select>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Log channel</span>
+                    <select id="log-channel"></select>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Lockdown role</span>
+                    <select id="lockdown-role"></select>
+                  </label>
+                </div>
+                <div class="role-panel">
+                  <div>
+                    <p class="field-label">Additional mod roles</p>
+                    <p class="field-help">
+                      These roles can run Vanguard moderation and configuration commands.
+                    </p>
+                  </div>
+                  <div id="mod-role-grid" class="role-grid"></div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Guard Core</p>
+                    <h3>Trigger thresholds and automated response.</h3>
+                  </div>
+                </div>
+                <div class="switch-grid">
+                  <label class="switch-card">
+                    <input id="guard-enabled" type="checkbox" />
+                    <span>Guard enabled</span>
+                  </label>
+                  <label class="switch-card">
+                    <input id="guard-delete-trigger-message" type="checkbox" />
+                    <span>Delete trigger message</span>
+                  </label>
+                </div>
+                <div class="field-grid four-up">
+                  <label class="field">
+                    <span class="field-label">Message threshold</span>
+                    <input id="guard-threshold" type="number" min="3" max="100" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Window seconds</span>
+                    <input id="guard-window-seconds" type="number" min="5" max="300" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">New account hours</span>
+                    <input id="guard-new-account-hours" type="number" min="1" max="168" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Cooldown seconds</span>
+                    <input id="guard-cooldown-seconds" type="number" min="30" max="3600" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Slowmode seconds</span>
+                    <input id="guard-slowmode-seconds" type="number" min="0" max="21600" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Critical slowmode</span>
+                    <input id="guard-critical-slowmode-seconds" type="number" min="0" max="21600" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Slowmode scope</span>
+                    <select id="guard-slowmode-scope">
+                      <option value="trigger">Trigger channels</option>
+                      <option value="active">Active channels</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Max slowmode channels</span>
+                    <input id="guard-max-slowmode-channels" type="number" min="1" max="25" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Auto-timeout seconds</span>
+                    <input id="guard-timeout-seconds" type="number" min="0" max="2419200" />
+                  </label>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Detection Toggles</p>
+                    <h3>Enable only the signals your server actually needs.</h3>
+                  </div>
+                </div>
+                <div class="switch-grid">
+                  <label class="switch-card">
+                    <input id="guard-detect-joins" type="checkbox" />
+                    <span>Join flood detection</span>
+                  </label>
+                  <label class="switch-card">
+                    <input id="guard-detect-mentions" type="checkbox" />
+                    <span>Mention burst detection</span>
+                  </label>
+                  <label class="switch-card">
+                    <input id="guard-detect-duplicates" type="checkbox" />
+                    <span>Duplicate message detection</span>
+                  </label>
+                  <label class="switch-card">
+                    <input id="guard-detect-links" type="checkbox" />
+                    <span>Link and invite detection</span>
+                  </label>
+                </div>
+
+                <div class="subsection-grid">
+                  <article class="sub-panel">
+                    <h4>Join floods</h4>
+                    <div class="field-grid two-up compact">
+                      <label class="field">
+                        <span class="field-label">Join threshold</span>
+                        <input id="guard-join-threshold" type="number" min="2" max="100" />
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Join window</span>
+                        <input id="guard-join-window-seconds" type="number" min="5" max="600" />
+                      </label>
+                    </div>
+                  </article>
+
+                  <article class="sub-panel">
+                    <h4>Mention bursts</h4>
+                    <div class="field-grid three-up compact">
+                      <label class="field">
+                        <span class="field-label">Mentions / message</span>
+                        <input id="guard-mention-per-message" type="number" min="1" max="50" />
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Burst threshold</span>
+                        <input id="guard-mention-burst-threshold" type="number" min="1" max="50" />
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Window seconds</span>
+                        <input id="guard-mention-window-seconds" type="number" min="5" max="600" />
+                      </label>
+                    </div>
+                  </article>
+
+                  <article class="sub-panel">
+                    <h4>Duplicate raids</h4>
+                    <div class="field-grid three-up compact">
+                      <label class="field">
+                        <span class="field-label">Duplicate threshold</span>
+                        <input id="guard-duplicate-threshold" type="number" min="2" max="30" />
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Window seconds</span>
+                        <input id="guard-duplicate-window-seconds" type="number" min="5" max="300" />
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Minimum characters</span>
+                        <input id="guard-duplicate-min-chars" type="number" min="4" max="200" />
+                      </label>
+                    </div>
+                  </article>
+
+                  <article class="sub-panel">
+                    <h4>Link spam</h4>
+                    <div class="field-grid two-up compact">
+                      <label class="field">
+                        <span class="field-label">Link threshold</span>
+                        <input id="guard-link-threshold" type="number" min="1" max="50" />
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Window seconds</span>
+                        <input id="guard-link-window-seconds" type="number" min="5" max="600" />
+                      </label>
+                    </div>
+                  </article>
+                </div>
+              </section>
+            </form>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden" aria-live="polite"></div>
+  </body>
+</html>

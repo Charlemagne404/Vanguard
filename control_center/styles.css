@@ -1,0 +1,491 @@
+:root {
+  --bg: #0f1117;
+  --bg-elevated: #171b25;
+  --bg-panel: rgba(22, 27, 37, 0.9);
+  --bg-panel-strong: rgba(27, 34, 47, 0.96);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --text: #f3f6fb;
+  --muted: #93a1b7;
+  --accent: #ff6b3d;
+  --accent-strong: #ff8458;
+  --good: #92ffb5;
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  --radius: 18px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: "IBM Plex Sans", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(255, 107, 61, 0.16), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(84, 183, 255, 0.14), transparent 28%),
+    linear-gradient(180deg, #0d1016 0%, #131924 100%);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(circle at center, black 45%, transparent 100%);
+}
+
+.page-shell {
+  width: min(1440px, calc(100vw - 40px));
+  margin: 0 auto;
+  padding: 28px 0 32px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: start;
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-family: "Space Grotesk", sans-serif;
+}
+
+h1 {
+  font-size: clamp(2.1rem, 3.8vw, 3.5rem);
+  max-width: 12ch;
+  line-height: 0.95;
+}
+
+h2 {
+  font-size: 1.5rem;
+}
+
+h3 {
+  font-size: 1.05rem;
+}
+
+.auth-card,
+.guild-rail,
+.hero-panel,
+.panel,
+.stat-card,
+.empty-state,
+.toast {
+  border: 1px solid var(--line);
+  background: var(--bg-panel);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow);
+}
+
+.auth-card {
+  width: min(480px, 100%);
+  padding: 16px;
+  border-radius: var(--radius);
+}
+
+.auth-row,
+.action-row {
+  display: flex;
+  gap: 12px;
+}
+
+.auth-row input {
+  flex: 1;
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: rgba(12, 15, 22, 0.9);
+  color: var(--text);
+  padding: 12px 14px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 104px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid rgba(255, 132, 88, 0.4);
+  outline-offset: 1px;
+}
+
+.primary-btn,
+.ghost-btn {
+  border-radius: 12px;
+  padding: 12px 16px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.primary-btn {
+  color: #120e0b;
+  background: linear-gradient(135deg, #ffd16a 0%, #ff7b4f 55%, #ff5d38 100%);
+  font-weight: 700;
+}
+
+.ghost-btn {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--line-strong);
+}
+
+.primary-btn:hover,
+.ghost-btn:hover {
+  transform: translateY(-1px);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 22px;
+}
+
+.guild-rail {
+  border-radius: 24px;
+  padding: 18px;
+  min-height: 70vh;
+}
+
+.rail-header,
+.panel-heading,
+.hero-panel,
+.action-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+
+.guild-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.guild-card {
+  width: 100%;
+  padding: 14px;
+  text-align: left;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.guild-card.active {
+  border-color: rgba(255, 132, 88, 0.65);
+  background: linear-gradient(135deg, rgba(255, 107, 61, 0.24), rgba(255, 255, 255, 0.04));
+}
+
+.guild-card strong,
+.guild-card span {
+  display: block;
+}
+
+.guild-card strong {
+  font-size: 0.98rem;
+  margin-bottom: 6px;
+}
+
+.guild-card span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.main-panel {
+  min-width: 0;
+}
+
+.empty-state {
+  padding: 42px;
+  border-radius: 26px;
+}
+
+.empty-state p:last-child {
+  margin-bottom: 0;
+  color: var(--muted);
+  max-width: 60ch;
+}
+
+.dashboard {
+  display: grid;
+  gap: 18px;
+}
+
+.hidden {
+  display: none;
+}
+
+.hero-panel,
+.panel,
+.action-bar {
+  border-radius: 24px;
+  padding: 20px;
+}
+
+.hero-panel {
+  background:
+    linear-gradient(135deg, rgba(255, 107, 61, 0.18), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01)),
+    var(--bg-panel-strong);
+}
+
+.hero-meta,
+.field-help,
+.preset-hint {
+  color: var(--muted);
+}
+
+.hero-status {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.status-pill {
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+}
+
+.status-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-bottom: 4px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.stat-card {
+  border-radius: 18px;
+  padding: 16px;
+}
+
+.stat-card span {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.stat-card strong {
+  font-size: 1.5rem;
+}
+
+.settings-form {
+  display: grid;
+  gap: 18px;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.field-grid.three-up {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.field-grid.four-up {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.field-grid.two-up.compact,
+.field-grid.three-up.compact {
+  margin-top: 14px;
+}
+
+.field,
+.switch-card {
+  display: grid;
+  gap: 8px;
+}
+
+.field-label {
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.switch-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.switch-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.switch-card input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+.role-panel {
+  margin-top: 16px;
+}
+
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.role-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+}
+
+.role-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.subsection-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.sub-panel {
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 16px;
+}
+
+.sub-panel h4 {
+  margin-bottom: 10px;
+}
+
+.preset-select {
+  min-width: 180px;
+}
+
+.toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  max-width: 360px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  z-index: 20;
+}
+
+.toast.success {
+  border-color: rgba(146, 255, 181, 0.3);
+  color: var(--good);
+}
+
+.toast.error {
+  border-color: rgba(255, 107, 61, 0.4);
+}
+
+@media (max-width: 1180px) {
+  .workspace,
+  .topbar,
+  .stats-grid,
+  .switch-grid,
+  .role-grid,
+  .field-grid.four-up,
+  .field-grid.three-up,
+  .subsection-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-panel,
+  .action-bar {
+    flex-direction: column;
+  }
+
+  .hero-status {
+    width: 100%;
+  }
+
+  .guild-rail {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .page-shell {
+    width: min(100vw - 20px, 100%);
+    padding-top: 16px;
+  }
+
+  .auth-row,
+  .action-row {
+    flex-direction: column;
+  }
+
+  .panel,
+  .hero-panel,
+  .guild-rail,
+  .empty-state,
+  .auth-card {
+    padding: 16px;
+  }
+}

@@ -24,10 +24,16 @@ except ImportError:
     def load_dotenv() -> bool:
         return False
 
+from control_center import (
+    build_control_center_url,
+    create_control_center_app,
+    start_control_center_site,
+)
 from data_paths import resolve_data_file
 from guard import (
     apply_guard_preset,
     guard_default_settings,
+    guard_runtime_stats,
     handle_guard_member_join,
     handle_guard_message,
     normalize_guard_settings,
@@ -280,9 +286,22 @@ VANGUARD_LICENSE_RECHECK_SECONDS = _parse_env_int(
     minimum=60,
     maximum=86400,
 )
+VANGUARD_CONTROL_CENTER_ENABLED = _parse_env_bool("VANGUARD_CONTROL_CENTER_ENABLED", False)
+VANGUARD_CONTROL_CENTER_HOST = (
+    os.getenv("VANGUARD_CONTROL_CENTER_HOST", "127.0.0.1").strip() or "127.0.0.1"
+)
+VANGUARD_CONTROL_CENTER_PORT = _parse_env_int(
+    "VANGUARD_CONTROL_CENTER_PORT",
+    8080,
+    minimum=1,
+    maximum=65535,
+)
+VANGUARD_CONTROL_CENTER_TOKEN = os.getenv("VANGUARD_CONTROL_CENTER_TOKEN", "").strip()
+VANGUARD_CONTROL_CENTER_PUBLIC_URL = os.getenv("VANGUARD_CONTROL_CENTER_PUBLIC_URL", "").strip()
 SETTINGS_FILE = resolve_data_file("settings.json")
 REMINDERS_FILE = resolve_data_file("reminders.json")
 MOD_LOG_FILE = resolve_data_file("modlog.json")
+CONTROL_CENTER_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "control_center")
 START_TIME = datetime.now(timezone.utc)
 REMINDER_CHECK_SECONDS = 15
 MAX_REMINDER_SECONDS = 60 * 60 * 24 * 30
@@ -862,6 +881,14 @@ def continental_id_configured() -> bool:
     return bool(CONTINENTAL_ID_HEALTH_URL or CONTINENTAL_ID_RESOLVE_URL)
 
 
+def get_control_center_url() -> str:
+    return build_control_center_url(
+        VANGUARD_CONTROL_CENTER_HOST,
+        VANGUARD_CONTROL_CENTER_PORT,
+        VANGUARD_CONTROL_CENTER_PUBLIC_URL,
+    )
+
+
 def resolve_continental_user_sync(discord_user_id: int | str) -> dict[str, Any]:
     normalized_id = str(discord_user_id or "").strip()
     if not normalized_id:
@@ -1361,6 +1388,7 @@ setup_guard_module(
 startup_initialized = False
 reminder_loop_task: asyncio.Task | None = None
 license_loop_task: asyncio.Task | None = None
+control_center_runner: object | None = None
 license_authorized = not VANGUARD_REQUIRE_LICENSE
 license_reason = "license checks disabled"
 license_allowed_guild_ids: set[int] = set()
@@ -1388,7 +1416,7 @@ async def global_access_policy_check(ctx: commands.Context) -> bool:
 
 @bot.event
 async def on_ready():
-    global startup_initialized, reminder_loop_task, license_loop_task
+    global startup_initialized, reminder_loop_task, license_loop_task, control_center_runner
     if bot.user is not None:
         print(f"[READY] Logged in as {bot.user} ({bot.user.id}) in {len(bot.guilds)} guild(s)")
     else:
@@ -1431,6 +1459,34 @@ async def on_ready():
         or VANGUARD_ALLOWED_GUILD_IDS
     ) and (license_loop_task is None or license_loop_task.done()):
         license_loop_task = asyncio.create_task(license_worker())
+    if VANGUARD_CONTROL_CENTER_ENABLED and control_center_runner is None:
+        if not VANGUARD_CONTROL_CENTER_TOKEN:
+            print("[CONTROL] Control center not started: VANGUARD_CONTROL_CENTER_TOKEN is not set.")
+        else:
+            try:
+                control_center_app = create_control_center_app(
+                    bot=bot,
+                    get_guild_config=get_guild_config,
+                    save_settings=save_settings,
+                    normalize_guard_settings=normalize_guard_settings,
+                    resolve_guard_preset_name=resolve_guard_preset_name,
+                    apply_guard_preset=apply_guard_preset,
+                    guard_runtime_stats=guard_runtime_stats,
+                    reminders=reminders,
+                    modlog=modlog,
+                    vote_store=vote_store,
+                    parse_datetime_utc=parse_datetime_utc,
+                    control_token=VANGUARD_CONTROL_CENTER_TOKEN,
+                    static_dir=CONTROL_CENTER_STATIC_DIR,
+                )
+                control_center_runner = await start_control_center_site(
+                    control_center_app,
+                    VANGUARD_CONTROL_CENTER_HOST,
+                    VANGUARD_CONTROL_CENTER_PORT,
+                )
+                print(f"[CONTROL] Control center running at {get_control_center_url()}/")
+            except Exception as exc:
+                print(f"[CONTROL] Failed to start control center: {exc}")
 
     startup_initialized = True
 
@@ -1620,7 +1676,7 @@ async def help_command(ctx: commands.Context, *, command_name: str | None = None
     embed.add_field(
         name="General",
         value=(
-            "`help` `status` `serverinfo` `userinfo` `avatar` `continentalid` "
+            "`help` `status` `serverinfo` `userinfo` `avatar` `continentalid` `controlcenter` "
             "`voteinfo` `activevotes` `voteconfig` `ops`"
         ),
         inline=False,
@@ -1853,6 +1909,17 @@ async def status(ctx: commands.Context):
     allowlist_status = f"{len(allowlist)} guild(s)" if allowlist else "OFF"
     checks.append(("License Gate", license_status))
     checks.append(("Guild Allowlist", allowlist_status))
+    if VANGUARD_CONTROL_CENTER_ENABLED:
+        control_status = (
+            get_control_center_url()
+            if control_center_runner is not None
+            else "CONFIGURED (waiting for bot ready)"
+        )
+        if not VANGUARD_CONTROL_CENTER_TOKEN:
+            control_status = "MISCONFIGURED (missing token)"
+    else:
+        control_status = "DISABLED"
+    checks.append(("Control Center", control_status))
 
     embed = discord.Embed(title="Vanguard Status", color=discord.Color.red())
     for key, value in checks:
@@ -1881,6 +1948,25 @@ async def tos(ctx: commands.Context):
         await ctx.send(f"Terms of Service: {TOS_URL}")
     else:
         await ctx.send("ToS link not configured. Set `TERMS_OF_SERVICE_URL` in `.env`.")
+
+
+@bot.hybrid_command(name="controlcenter")
+async def controlcenter(ctx: commands.Context):
+    """Show the configured control center URL for moderators."""
+    result = await require_mod_context(ctx)
+    if not result:
+        return
+    if not VANGUARD_CONTROL_CENTER_ENABLED:
+        await ctx.send("⚠️ Control center is disabled on this Vanguard instance.")
+        return
+    if not VANGUARD_CONTROL_CENTER_TOKEN:
+        await ctx.send("⚠️ Control center token is missing. Set `VANGUARD_CONTROL_CENTER_TOKEN` in `.env`.")
+        return
+    await ctx.send(
+        "Open the Vanguard control center here:\n"
+        f"{get_control_center_url()}\n"
+        "Sign in with the configured control center token, then pick this server from the guild list."
+    )
 
 
 @bot.hybrid_command()
