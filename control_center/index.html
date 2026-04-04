@@ -60,6 +60,9 @@
             <div>
               <p class="eyebrow">Servers</p>
               <h2>Guilds</h2>
+              <p class="field-help rail-copy">
+                Select a guild to load live configuration, routing, and guard posture.
+              </p>
             </div>
             <button id="refresh-guilds" class="ghost-btn" type="button">Refresh</button>
           </div>
@@ -229,11 +232,17 @@
                 <div class="switch-grid">
                   <label class="switch-card">
                     <input id="guard-enabled" type="checkbox" />
-                    <span>Guard enabled</span>
+                    <div class="switch-copy">
+                      <span class="switch-title">Guard enabled</span>
+                      <span class="switch-detail">Allow Vanguard to enforce the configured raid response rules.</span>
+                    </div>
                   </label>
                   <label class="switch-card">
                     <input id="guard-delete-trigger-message" type="checkbox" />
-                    <span>Delete trigger message</span>
+                    <div class="switch-copy">
+                      <span class="switch-title">Delete trigger message</span>
+                      <span class="switch-detail">Remove the message that tripped a guard rule when mitigation fires.</span>
+                    </div>
                   </label>
                 </div>
                 <div class="field-grid four-up">
@@ -289,19 +298,31 @@
                 <div class="switch-grid">
                   <label class="switch-card">
                     <input id="guard-detect-joins" type="checkbox" />
-                    <span>Join flood detection</span>
+                    <div class="switch-copy">
+                      <span class="switch-title">Join flood detection</span>
+                      <span class="switch-detail">Track bursts of new members arriving inside a short time window.</span>
+                    </div>
                   </label>
                   <label class="switch-card">
                     <input id="guard-detect-mentions" type="checkbox" />
-                    <span>Mention burst detection</span>
+                    <div class="switch-copy">
+                      <span class="switch-title">Mention burst detection</span>
+                      <span class="switch-detail">Detect waves of high-mention messages that may signal coordinated spam.</span>
+                    </div>
                   </label>
                   <label class="switch-card">
                     <input id="guard-detect-duplicates" type="checkbox" />
-                    <span>Duplicate message detection</span>
+                    <div class="switch-copy">
+                      <span class="switch-title">Duplicate message detection</span>
+                      <span class="switch-detail">Catch repeat-message raids across short rolling windows.</span>
+                    </div>
                   </label>
                   <label class="switch-card">
                     <input id="guard-detect-links" type="checkbox" />
-                    <span>Link and invite detection</span>
+                    <div class="switch-copy">
+                      <span class="switch-title">Link and invite detection</span>
+                      <span class="switch-detail">Flag fast-moving invite and external-link spam before it spreads.</span>
+                    </div>
                   </label>
                 </div>
 

@@ -49,11 +49,12 @@ body::before {
   width: min(1440px, calc(100vw - 40px));
   margin: 0 auto;
   padding: 28px 0 32px;
+  position: relative;
 }
 
 .topbar {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 480px);
   gap: 24px;
   align-items: start;
   margin-bottom: 24px;
@@ -107,6 +108,9 @@ h3 {
   width: min(480px, 100%);
   padding: 16px;
   border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, rgba(255, 107, 61, 0.08), transparent 36%),
+    var(--bg-panel);
 }
 
 .auth-stack,
@@ -168,6 +172,7 @@ textarea {
   background: rgba(12, 15, 22, 0.9);
   color: var(--text);
   padding: 12px 14px;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
 textarea {
@@ -180,6 +185,13 @@ select:focus,
 textarea:focus {
   outline: 2px solid rgba(255, 132, 88, 0.4);
   outline-offset: 1px;
+  border-color: rgba(255, 132, 88, 0.48);
+  box-shadow: 0 0 0 4px rgba(255, 132, 88, 0.08);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #7f8ca0;
 }
 
 .primary-btn,
@@ -216,12 +228,15 @@ textarea:focus {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   gap: 22px;
+  align-items: start;
 }
 
 .guild-rail {
   border-radius: 24px;
   padding: 18px;
   min-height: 70vh;
+  position: sticky;
+  top: 24px;
 }
 
 .rail-header,
@@ -249,11 +264,19 @@ textarea:focus {
   background: rgba(255, 255, 255, 0.03);
   color: var(--text);
   cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.guild-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 132, 88, 0.32);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .guild-card.active {
   border-color: rgba(255, 132, 88, 0.65);
   background: linear-gradient(135deg, rgba(255, 107, 61, 0.24), rgba(255, 255, 255, 0.04));
+  box-shadow: inset 0 0 0 1px rgba(255, 132, 88, 0.2);
 }
 
 .guild-card strong,
@@ -277,6 +300,8 @@ textarea:focus {
 
 .main-panel {
   min-width: 0;
+  display: grid;
+  gap: 18px;
 }
 
 .empty-state {
@@ -292,7 +317,7 @@ textarea:focus {
 
 .dashboard {
   display: grid;
-  gap: 18px;
+  gap: 20px;
 }
 
 .hidden {
@@ -321,7 +346,7 @@ textarea:focus {
 
 .hero-status {
   display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
   gap: 12px;
 }
 
@@ -330,6 +355,11 @@ textarea:focus {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--line);
   padding: 12px 14px;
+}
+
+.status-pill strong {
+  display: block;
+  font-size: 1.15rem;
 }
 
 .status-label {
@@ -347,15 +377,27 @@ textarea:focus {
   padding: 14px 16px;
 }
 
+.action-bar {
+  position: sticky;
+  top: 18px;
+  z-index: 5;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 55%),
+    var(--bg-panel-strong);
+}
+
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 14px;
 }
 
 .stat-card {
   border-radius: 18px;
   padding: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 55%),
+    var(--bg-panel);
 }
 
 .stat-card span {
@@ -372,6 +414,19 @@ textarea:focus {
 .settings-form {
   display: grid;
   gap: 18px;
+}
+
+.panel,
+.empty-state {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 55%),
+    var(--bg-panel);
+}
+
+.panel-heading {
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line);
 }
 
 .field-grid {
@@ -406,7 +461,7 @@ textarea:focus {
 
 .switch-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -416,12 +471,37 @@ textarea:focus {
   border-radius: 16px;
   padding: 14px;
   background: rgba(255, 255, 255, 0.03);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
 }
 
 .switch-card input {
   width: 20px;
   height: 20px;
   margin: 0;
+  accent-color: var(--accent);
+  margin-top: 2px;
+}
+
+.switch-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.switch-title {
+  font-weight: 600;
+}
+
+.switch-detail {
+  color: var(--muted);
+  font-size: 0.83rem;
+  line-height: 1.45;
+}
+
+.switch-card:has(input:checked) {
+  border-color: rgba(255, 132, 88, 0.48);
+  background: linear-gradient(135deg, rgba(255, 107, 61, 0.16), rgba(255, 255, 255, 0.03));
 }
 
 .role-panel {
@@ -430,7 +510,7 @@ textarea:focus {
 
 .role-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
   margin-top: 12px;
   max-height: 260px;
@@ -451,6 +531,12 @@ textarea:focus {
   width: 16px;
   height: 16px;
   margin: 0;
+  accent-color: var(--accent);
+}
+
+.role-option:has(input:checked) {
+  border-color: rgba(255, 132, 88, 0.48);
+  background: linear-gradient(135deg, rgba(255, 107, 61, 0.16), rgba(255, 255, 255, 0.03));
 }
 
 .subsection-grid {
@@ -462,7 +548,9 @@ textarea:focus {
 .sub-panel {
   border-radius: 18px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.03);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 55%),
+    rgba(255, 255, 255, 0.03);
   padding: 16px;
 }
 
@@ -493,12 +581,14 @@ textarea:focus {
   border-color: rgba(255, 107, 61, 0.4);
 }
 
+.rail-copy {
+  margin: 8px 0 0;
+  max-width: 30ch;
+}
+
 @media (max-width: 1180px) {
   .workspace,
   .topbar,
-  .stats-grid,
-  .switch-grid,
-  .role-grid,
   .field-grid.four-up,
   .field-grid.three-up,
   .subsection-grid {
@@ -516,6 +606,11 @@ textarea:focus {
 
   .guild-rail {
     min-height: auto;
+    position: static;
+  }
+
+  .action-bar {
+    position: static;
   }
 }
 
@@ -531,6 +626,11 @@ textarea:focus {
   }
 
   .integration-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .field-grid,
+  .subsection-grid {
     grid-template-columns: 1fr;
   }
 

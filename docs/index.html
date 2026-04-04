@@ -142,12 +142,30 @@
         <p class="section-kicker">Command Deck</p>
         <h3>Compact command surface, production-ready behavior.</h3>
         <div class="command-list">
-          <div class="command-item"><code>/lockdown</code> Freeze channels fast</div>
-          <div class="command-item"><code>/warn</code> Track behavior with context</div>
-          <div class="command-item"><code>/timeout</code> Pause bad actors</div>
-          <div class="command-item"><code>/remind</code> Keep teams on task</div>
-          <div class="command-item"><code>/poll</code> Gather quick decisions</div>
-          <div class="command-item"><code>/vanguard</code> AI assistant relay</div>
+          <div class="command-item">
+            <code>/lockdown</code>
+            <span>Freeze channels fast</span>
+          </div>
+          <div class="command-item">
+            <code>/warn</code>
+            <span>Track behavior with context</span>
+          </div>
+          <div class="command-item">
+            <code>/timeout</code>
+            <span>Pause bad actors</span>
+          </div>
+          <div class="command-item">
+            <code>/remind</code>
+            <span>Keep teams on task</span>
+          </div>
+          <div class="command-item">
+            <code>/poll</code>
+            <span>Gather quick decisions</span>
+          </div>
+          <div class="command-item">
+            <code>/vanguard</code>
+            <span>AI assistant relay</span>
+          </div>
         </div>
       </section>
 
@@ -160,42 +178,86 @@
           flow in a cleaner and easier interface. Both paths let you tune how
           Vanguard behaves for your community.
         </p>
+        <div class="control-overview">
+          <div class="control-overview-copy">
+            <p class="control-label">Shared system surface</p>
+            <h4>Two operating styles, one Vanguard configuration model.</h4>
+            <p>
+              Use Discord for quick changes during live moderation. Use the
+              Control Center when you want a broader overview, cleaner form
+              layout, and an easier path for full server setup.
+            </p>
+          </div>
+          <div class="control-metric-grid" aria-label="Control mode summary">
+            <div class="control-metric">
+              <strong>2</strong>
+              <span>management paths</span>
+            </div>
+            <div class="control-metric">
+              <strong>1</strong>
+              <span>shared behavior model</span>
+            </div>
+            <div class="control-metric">
+              <strong>0</strong>
+              <span>extra utility bots needed</span>
+            </div>
+          </div>
+        </div>
         <div class="control-grid">
           <article class="control-card">
-            <p class="control-label">Inside Discord</p>
-            <h4>Customize with commands</h4>
+            <div class="control-card-top">
+              <p class="control-label">Inside Discord</p>
+              <span class="control-badge">Immediate</span>
+            </div>
+            <h4>Command-first moderation</h4>
             <p>
-              Adjust Vanguard from inside the server with commands whenever you
-              want to change settings without leaving Discord. This works well
-              for moderators who prefer to manage configuration right where the
-              team is already working.
+              Keep configuration next to the conversation. This path works best
+              when moderators want to adjust behavior without leaving the server
+              they are actively managing.
             </p>
+            <ul class="control-points">
+              <li>Best for live incidents and quick policy changes</li>
+              <li>Works well when mods already know the command surface</li>
+              <li>Keeps setup and enforcement inside the same workspace</li>
+            </ul>
             <div class="control-chip-row">
               <span class="chip">In-server setup</span>
-              <span class="chip">Command-based config</span>
-              <span class="chip">Moderator friendly</span>
+              <span class="chip">Fast operator flow</span>
+              <span class="chip">Live moderation</span>
             </div>
           </article>
           <article class="control-card control-card-highlight">
-            <p class="control-label">From The Web</p>
-            <h4>Easier Control Center setup</h4>
+            <div class="control-card-top">
+              <p class="control-label">From The Web</p>
+              <span class="control-badge">Guided</span>
+            </div>
+            <h4>Cleaner Control Center setup</h4>
             <p>
-              Open the Control Center when you want those settings laid out in
-              one place. It gives you a more accessible way to review options,
-              update server behavior, and customize Vanguard without needing to
-              rely on commands alone.
+              Open the Control Center when you want every major setting grouped
+              together in a clearer interface. It is the easier path for
+              reviewing systems, comparing options, and onboarding a server.
             </p>
+            <ul class="control-points">
+              <li>Better for scanning multiple settings at once</li>
+              <li>Reduces command memorization during initial setup</li>
+              <li>Gives operators a simpler review and adjustment flow</li>
+            </ul>
             <div class="control-chip-row">
               <span class="chip">Centralized settings</span>
-              <span class="chip">Easier overview</span>
-              <span class="chip">Simpler customization</span>
+              <span class="chip">Cleaner overview</span>
+              <span class="chip">Lower setup friction</span>
             </div>
           </article>
         </div>
         <div class="control-callout">
-          <strong>Your choice:</strong> customize Vanguard with commands inside
-          the server, or use the Control Center when you want a simpler way to
-          manage the same setup.
+          <div>
+            <strong>Use whichever fits the moment.</strong>
+            <span>
+              Tune Vanguard with commands during live operations, then switch to
+              the Control Center when you want the cleaner management view.
+            </span>
+          </div>
+          <a class="btn btn-control" href="./control/">Open Control Center</a>
         </div>
       </section>
 
@@ -319,7 +381,7 @@
 
     <footer class="footer container">
       <p>Vanguard by Continental</p>
-      <p>Independent Vanguard project. Made by Continental.</p>
+      <p>Official Continental Discord moderation and utility bot.      </p>
       <div class="footer-links">
         <a href="https://github.com/PClaystation" target="_blank" rel="noreferrer"
           >GitHub</a

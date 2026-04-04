@@ -43,7 +43,7 @@
     </header>
 
     <main id="top">
-      <section class="hero container reveal" data-tilt>
+      <section class="hero container reveal control-hero" data-tilt>
         <div class="hero-banner">
           <div class="banner-top">
             <img
@@ -53,39 +53,91 @@
             />
             <p class="banner-org">Made by Continental</p>
           </div>
-          <h1>CONTROL</h1>
+          <h1>CONTROL CENTER</h1>
         </div>
         <div class="hero-copy">
-          <p class="eyebrow">Live Dashboard</p>
-          <h2>The control center runs inside a live Vanguard instance.</h2>
+          <p class="eyebrow">Live Dashboard Access</p>
+          <h2>Run the Control Center from your own Vanguard deployment.</h2>
           <p class="subtitle">
-            This published site is static documentation only. To use the dashboard, enable the
-            embedded web server in your own Vanguard bot instance and then open that instance's
+            This published site is documentation only. The actual dashboard is
+            served by a live Vanguard instance after you enable the embedded web
+            server and authentication flow, then open that instance's
             <code>/control/</code> route.
           </p>
           <div class="hero-actions">
             <a class="btn btn-primary" href="https://github.com/PClaystation/Vanguard#readme" target="_blank" rel="noreferrer"
               >Open Setup Guide</a
             >
+            <a class="btn btn-control" href="https://github.com/PClaystation/Vanguard#readme" target="_blank" rel="noreferrer"
+              >Review Control Setup</a
+            >
             <a class="btn btn-ghost" href="/">Return Home</a>
           </div>
         </div>
 
         <aside class="hero-panel" aria-label="Control Center notes">
-          <p class="panel-title">Required Env Vars</p>
+          <p class="panel-title">Before You Launch</p>
           <div class="panel-line">
             <span class="dot"></span>
             <span><code>VANGUARD_CONTROL_CENTER_ENABLED=true</code></span>
           </div>
           <div class="panel-line">
             <span class="dot"></span>
-            <span>Set Discord OAuth credentials or an operator token</span>
+            <span>Configure Discord OAuth or an operator token for access</span>
           </div>
           <div class="panel-line">
             <span class="dot dot-red"></span>
             <span>Then browse to your instance URL at <code>/control/</code></span>
           </div>
+          <div class="panel-chip-row">
+            <span class="chip">Hosted by your bot</span>
+            <span class="chip">Auth protected</span>
+            <span class="chip">Per-server controls</span>
+          </div>
         </aside>
+      </section>
+
+      <section class="section container reveal">
+        <p class="section-kicker">Access Flow</p>
+        <h3>Three clean steps to open the live dashboard.</h3>
+        <div class="control-access-grid">
+          <article class="control-access-card">
+            <p class="control-label">Step 1</p>
+            <h4>Enable the web surface</h4>
+            <p>
+              Turn on the control center in your Vanguard environment so the bot
+              can serve the dashboard securely.
+            </p>
+          </article>
+          <article class="control-access-card">
+            <p class="control-label">Step 2</p>
+            <h4>Configure authentication</h4>
+            <p>
+              Set up Continental ID linkage, Discord OAuth, or an operator token
+              so the dashboard knows who is allowed to manage a server.
+            </p>
+          </article>
+          <article class="control-access-card">
+            <p class="control-label">Step 3</p>
+            <h4>Open your live route</h4>
+            <p>
+              Visit your deployment at <code>/control/</code> to manage welcome
+              flow, guard settings, and operations routing in one place.
+            </p>
+          </article>
+        </div>
+        <div class="control-callout control-callout-wide">
+          <div>
+            <strong>No public shared dashboard is hosted here.</strong>
+            <span>
+              This page explains access only. The real control center lives
+              inside the Vanguard instance you run.
+            </span>
+          </div>
+          <a class="btn btn-control" href="https://github.com/PClaystation/Vanguard#readme" target="_blank" rel="noreferrer"
+            >Read Full Setup</a
+          >
+        </div>
       </section>
     </main>
 
