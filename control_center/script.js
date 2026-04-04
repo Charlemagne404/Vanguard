@@ -107,12 +107,18 @@ const PRESETS = {
 const CONTROL_BASE = "/control";
 const API_BASE = `${CONTROL_BASE}/api`;
 const AUTH_BASE = `${CONTROL_BASE}/auth`;
+const POPUP_NAME = "continental-id-login";
+const POPUP_FEATURES = "popup=yes,width=520,height=760";
 
 const state = {
-  token: localStorage.getItem("vanguard-control-token") || "",
   authenticated: false,
   mode: null,
   user: null,
+  continental: null,
+  license: null,
+  continentalLoginUrl: "",
+  continentalDashboardUrl: "",
+  continentalAuthEnabled: false,
   guilds: [],
   selectedGuildId: null,
   detail: null,
@@ -157,10 +163,8 @@ const guardCheckboxFields = [
   ["guard_detect_links", "guard-detect-links"],
 ];
 
-const tokenInput = document.querySelector("#token-input");
-const authForm = document.querySelector("#auth-form");
 const authStatus = document.querySelector("#auth-status");
-const discordLogin = document.querySelector("#discord-login");
+const continentalLogin = document.querySelector("#continental-login");
 const logoutButton = document.querySelector("#logout-button");
 const refreshButton = document.querySelector("#refresh-guilds");
 const guildList = document.querySelector("#guild-list");
@@ -171,23 +175,40 @@ const resetButton = document.querySelector("#reset-form");
 const guardPresetSelect = document.querySelector("#guard-preset-select");
 const presetHint = document.querySelector("#preset-hint");
 const toast = document.querySelector("#toast");
+const continentalBadge = document.querySelector("#continental-badge");
+const continentalDetail = document.querySelector("#continental-detail");
+const licenseBadge = document.querySelector("#license-badge");
+const licenseDetail = document.querySelector("#license-detail");
+const guildAccessBadge = document.querySelector("#guild-access-badge");
+const dashboardNotice = document.querySelector("#dashboard-notice");
 
-tokenInput.value = state.token;
 bootstrap();
 
 async function bootstrap() {
   await loadSession();
-  if (state.token || state.authenticated) {
+  if (state.authenticated) {
     await loadGuilds();
   }
 }
 
-authForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  state.token = tokenInput.value.trim();
-  localStorage.setItem("vanguard-control-token", state.token);
-  await loadSession();
-  await loadGuilds();
+continentalLogin.addEventListener("click", async () => {
+  const session = await loadSession();
+  if (!state.continentalAuthEnabled || !state.continentalLoginUrl) {
+    showToast("Continental ID sign-in is not configured on this Vanguard instance.", "error");
+    return;
+  }
+  if (session?.authenticated) {
+    await loadGuilds();
+    return;
+  }
+
+  const popupUrl = buildContinentalPopupUrl(state.continentalLoginUrl);
+  const popup = window.open(popupUrl, POPUP_NAME, POPUP_FEATURES);
+  if (!popup) {
+    showToast("The Continental ID sign-in popup was blocked by your browser.", "error");
+    return;
+  }
+  popup.focus();
 });
 
 logoutButton.addEventListener("click", async () => {
@@ -202,17 +223,15 @@ logoutButton.addEventListener("click", async () => {
   state.authenticated = false;
   state.user = null;
   state.mode = null;
-  await loadSession();
-  if (state.token) {
-    await loadGuilds();
-    return;
-  }
+  state.continental = null;
   state.guilds = [];
   state.selectedGuildId = null;
   state.detail = null;
+  await loadSession();
   renderGuildList();
   dashboard.classList.add("hidden");
   emptyState.classList.remove("hidden");
+  renderDashboardNotice(null);
 });
 
 refreshButton.addEventListener("click", async () => {
@@ -260,9 +279,6 @@ async function api(path, options = {}) {
   const headers = {
     ...(options.headers || {}),
   };
-  if (state.token) {
-    headers["X-Vanguard-Control-Token"] = state.token;
-  }
   if (options.body && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
@@ -290,23 +306,39 @@ async function loadSession() {
     state.authenticated = Boolean(payload.authenticated);
     state.mode = payload.mode || null;
     state.user = payload.user || null;
+    state.continental = payload.continental || null;
+    state.license = payload.license || null;
+    state.continentalLoginUrl = payload.continental_login_url || "";
+    state.continentalDashboardUrl = payload.continental_dashboard_url || "";
+    state.continentalAuthEnabled = Boolean(payload.continental_auth_enabled);
     renderAuthStatus(payload);
+    renderIntegrationSummary();
+    return payload;
   } catch (error) {
     state.authenticated = false;
     state.mode = null;
     state.user = null;
-    renderAuthStatus({ authenticated: false, oauth_enabled: true, operator_token_enabled: Boolean(state.token) });
+    state.continental = null;
+    state.license = null;
+    state.continentalLoginUrl = "";
+    state.continentalDashboardUrl = "";
+    state.continentalAuthEnabled = false;
+    renderAuthStatus({ authenticated: false, continental_auth_enabled: false });
+    renderIntegrationSummary();
+    return null;
   }
 }
 
 async function loadGuilds() {
-  if (!state.token && !state.authenticated) {
-    showToast("Sign in with Discord or use the operator token first.", "error");
+  if (!state.authenticated) {
+    showToast("Sign in with Continental ID first.", "error");
     return;
   }
   try {
     const payload = await api(`${API_BASE}/guilds`);
     state.guilds = payload.guilds || [];
+    state.license = payload.license || state.license;
+    renderIntegrationSummary();
     renderGuildList();
     const hashGuildId = window.location.hash.replace("#guild-", "");
     const preferredGuildId =
@@ -319,12 +351,14 @@ async function loadGuilds() {
     } else {
       dashboard.classList.add("hidden");
       emptyState.classList.remove("hidden");
+      renderDashboardNotice(null);
     }
   } catch (error) {
     state.guilds = [];
     renderGuildList();
     dashboard.classList.add("hidden");
     emptyState.classList.remove("hidden");
+    renderDashboardNotice(null);
     await loadSession();
     showToast(error.message || "Failed to load guilds.", "error");
   }
@@ -347,6 +381,11 @@ function renderGuildList() {
       <strong>${escapeHtml(guild.name)}</strong>
       <span>${guild.member_count} members</span>
       <span>Guard ${guild.guard_enabled ? "enabled" : "disabled"} • preset ${escapeHtml(guild.guard_preset)}</span>
+      <span class="${guild.authorization && !guild.authorization.authorized ? "guild-card-alert" : ""}">${
+        guild.authorization && !guild.authorization.authorized
+          ? escapeHtml(guild.authorization.reason || "Restricted by current access policy.")
+          : "Guild is currently within Vanguard access scope."
+      }</span>
     `;
     button.addEventListener("click", () => selectGuild(guild.id));
     guildList.appendChild(button);
@@ -383,6 +422,15 @@ function renderDetail(detail) {
   document.querySelector("#stat-cases").textContent = detail.recent_cases_24h;
   document.querySelector("#stat-triggers").textContent = detail.runtime_stats.triggers_total;
   document.querySelector("#stat-suppressed").textContent = detail.runtime_stats.suppressed_total;
+  if (guildAccessBadge) {
+    guildAccessBadge.textContent =
+      detail.authorization && !detail.authorization.authorized ? "Restricted" : "Authorized";
+  }
+  if (detail.license) {
+    state.license = detail.license;
+    renderIntegrationSummary();
+  }
+  renderDashboardNotice(detail);
 
   populateSelect("welcome-channel", detail.channels, "Channel not set");
   populateSelect("ops-channel", detail.channels, "Channel not set");
@@ -522,26 +570,246 @@ function syncGuildSummary(detail) {
 }
 
 function renderAuthStatus(session) {
-  if (state.mode === "operator") {
-    authStatus.textContent = "Operator token override active. You can access every guild on this Vanguard instance.";
-    logoutButton.classList.add("hidden");
-    discordLogin.classList.remove("hidden");
-    return;
-  }
   if (state.authenticated && state.user) {
-    authStatus.textContent = `Signed in as ${state.user.name}. Only guilds you can moderate are shown.`;
+    authStatus.textContent = `Signed in as ${state.user.name}. Only guilds your linked Discord account can moderate are shown.`;
     logoutButton.classList.remove("hidden");
-    discordLogin.classList.add("hidden");
+    continentalLogin.classList.add("hidden");
     return;
   }
-  if (session && session.oauth_enabled === false) {
-    authStatus.textContent = "Discord sign-in is not configured on this instance.";
+  if (session && session.continental_auth_enabled === false) {
+    authStatus.textContent = "Continental ID sign-in is not configured on this instance.";
   } else {
-    authStatus.textContent = "Not signed in.";
+    authStatus.textContent = "Sign in with Continental ID. Discord must be linked on that account.";
   }
   logoutButton.classList.add("hidden");
-  discordLogin.classList.toggle("hidden", session && session.oauth_enabled === false);
+  continentalLogin.classList.toggle("hidden", session && session.continental_auth_enabled === false);
 }
+
+function describeContinentalStatus(continental) {
+  if (!continental || !continental.configured) {
+    return {
+      badge: "Disabled",
+      detail: "Continental ID integration is not configured for this Vanguard instance.",
+    };
+  }
+  if (!state.authenticated) {
+    return {
+      badge: "Awaiting sign-in",
+      detail: "Sign in with Continental ID, then make sure Discord is linked on that account.",
+    };
+  }
+  if (!continental.ok) {
+    return {
+      badge: "Unavailable",
+      detail: continental.message || "Continental ID lookup is currently unavailable.",
+    };
+  }
+  if (!continental.linked) {
+    const dashboardText = state.continentalDashboardUrl
+      ? ` Link Discord in Continental ID: ${state.continentalDashboardUrl}`
+      : "";
+    return {
+      badge: "Not linked",
+      detail:
+        (continental.message || "Your Continental ID account is not linked to Discord.") + dashboardText,
+    };
+  }
+
+  const flags = continental.flags || {};
+  let badge = "Linked";
+  if (flags.banned_from_ai) {
+    badge = "Restricted";
+  } else if (flags.flagged) {
+    badge = "Review";
+  } else if (flags.staff) {
+    badge = "Staff";
+  } else if (flags.trusted) {
+    badge = "Trusted";
+  }
+
+  const identityBits = [];
+  if (continental.user && continental.user.display_name) {
+    identityBits.push(continental.user.display_name);
+  }
+  if (continental.user && continental.user.username) {
+    identityBits.push(`@${continental.user.username}`);
+  }
+  if (continental.user && continental.user.verified) {
+    identityBits.push("verified");
+  }
+
+  let detail = identityBits.length
+    ? `Linked as ${identityBits.join(" • ")}.`
+    : "Linked to Continental ID.";
+  if (flags.banned_from_ai) {
+    detail += " This account is restricted from Vanguard AI features.";
+  } else if (flags.flagged) {
+    detail += flags.flag_reason
+      ? ` Brand standing is under review: ${flags.flag_reason}.`
+      : " Brand standing is currently under review.";
+  } else if (flags.staff) {
+    detail += " Staff standing is active.";
+  } else if (flags.trusted) {
+    detail += " Trusted standing is active.";
+  }
+
+  return { badge, detail };
+}
+
+function describeLicenseState(license) {
+  if (!license) {
+    return {
+      badge: "Disabled",
+      detail: "Vanguard license status is not available.",
+    };
+  }
+
+  if (license.required && !license.authorized) {
+    return {
+      badge: "Blocked",
+      detail: license.reason || "This Vanguard instance is blocked by its required license check.",
+    };
+  }
+
+  if (license.allowed_guild_count && !license.configured && !license.required) {
+    return {
+      badge: "Allowlist",
+      detail: `${license.allowed_guild_count} guild(s) are explicitly authorized on this instance.`,
+    };
+  }
+
+  if (!license.configured && !license.required) {
+    return {
+      badge: "Disabled",
+      detail: "No remote license verification is configured for this Vanguard instance.",
+    };
+  }
+
+  const badge = license.required ? "Active" : "Monitor";
+  const detailBits = [];
+  if (license.reason) {
+    detailBits.push(license.reason);
+  }
+  if (license.allowed_guild_count) {
+    detailBits.push(`${license.allowed_guild_count} guild(s) allowed`);
+  }
+  const entitlements = [];
+  if (license.entitlements && license.entitlements.ai) {
+    entitlements.push("AI");
+  }
+  if (license.entitlements && license.entitlements.advanced_votes) {
+    entitlements.push("advanced votes");
+  }
+  if (license.entitlements && Array.isArray(license.entitlements.guard_presets) && license.entitlements.guard_presets.length) {
+    entitlements.push(`guard presets: ${license.entitlements.guard_presets.join(", ")}`);
+  }
+  if (entitlements.length) {
+    detailBits.push(`Entitlements: ${entitlements.join(" • ")}`);
+  }
+
+  return {
+    badge,
+    detail: detailBits.join(" | ") || "License state is configured.",
+  };
+}
+
+function renderIntegrationSummary() {
+  const continental = describeContinentalStatus(state.continental);
+  if (continentalBadge) {
+    continentalBadge.textContent = continental.badge;
+  }
+  if (continentalDetail) {
+    continentalDetail.textContent = continental.detail;
+  }
+
+  const license = describeLicenseState(state.license);
+  if (licenseBadge) {
+    licenseBadge.textContent = license.badge;
+  }
+  if (licenseDetail) {
+    licenseDetail.textContent = license.detail;
+  }
+}
+
+function renderDashboardNotice(detail) {
+  if (!dashboardNotice) {
+    return;
+  }
+
+  const authorization = detail && detail.authorization ? detail.authorization : null;
+  if (!authorization || authorization.authorized) {
+    dashboardNotice.classList.add("hidden");
+    dashboardNotice.textContent = "";
+    return;
+  }
+
+  dashboardNotice.textContent = authorization.reason || "This guild is currently outside the active Vanguard access scope.";
+  dashboardNotice.classList.remove("hidden");
+}
+
+function buildContinentalPopupUrl(baseUrl) {
+  const url = new URL(baseUrl, window.location.origin);
+  url.searchParams.set("origin", window.location.origin);
+  return url.toString();
+}
+
+function getContinentalLoginOrigin() {
+  if (!state.continentalLoginUrl) {
+    return "";
+  }
+  try {
+    return new URL(state.continentalLoginUrl, window.location.origin).origin;
+  } catch (error) {
+    return "";
+  }
+}
+
+async function exchangeContinentalSession(accessToken) {
+  const payload = await api(`${API_BASE}/session/exchange`, {
+    method: "POST",
+    body: JSON.stringify({ accessToken }),
+  });
+  state.authenticated = Boolean(payload.authenticated);
+  state.mode = payload.mode || null;
+  state.user = payload.user || null;
+  state.continental = payload.continental || null;
+  state.license = payload.license || null;
+  renderAuthStatus({
+    authenticated: state.authenticated,
+    continental_auth_enabled: state.continentalAuthEnabled,
+  });
+  renderIntegrationSummary();
+  await loadGuilds();
+}
+
+window.addEventListener("message", async (event) => {
+  const expectedOrigin = getContinentalLoginOrigin();
+  if (!expectedOrigin || event.origin !== expectedOrigin) {
+    return;
+  }
+  const payload = event.data || {};
+  if (payload.type !== "LOGIN_SUCCESS") {
+    return;
+  }
+  const accessToken = String(payload.accessToken || payload.token || "").trim();
+  if (!accessToken) {
+    showToast("Continental ID did not return a usable access token.", "error");
+    return;
+  }
+  try {
+    await exchangeContinentalSession(accessToken);
+    showToast("Signed in through Continental ID.", "success");
+  } catch (error) {
+    const message = error.message || "Continental ID sign-in could not be completed.";
+    showToast(message, "error");
+    if (
+      state.continentalDashboardUrl &&
+      /discord linked|link discord|linked before it can access/i.test(message)
+    ) {
+      window.open(state.continentalDashboardUrl, "_blank", "noopener,noreferrer");
+    }
+  }
+});
 
 function formatTimestamp(value) {
   if (!value) {

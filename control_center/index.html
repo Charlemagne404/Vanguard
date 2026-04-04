@@ -27,28 +27,30 @@
         <section class="auth-card">
           <div class="auth-stack">
             <div>
-              <label class="field-label">Discord access</label>
+              <label class="field-label">Continental ID access</label>
               <p id="auth-status" class="field-help">Not signed in.</p>
             </div>
             <div class="auth-row">
-              <a id="discord-login" class="primary-btn" href="/control/auth/login">Sign in with Discord</a>
+              <button id="continental-login" class="primary-btn" type="button">Sign in with Continental ID</button>
               <button id="logout-button" type="button" class="ghost-btn hidden">Log out</button>
             </div>
           </div>
-          <form id="auth-form" class="operator-form">
-            <label class="field-label" for="token-input">Operator token override</label>
-            <div class="auth-row">
-              <input
-                id="token-input"
-                name="token"
-                type="password"
-                placeholder="Optional: VANGUARD_CONTROL_CENTER_TOKEN"
-                autocomplete="current-password"
-              />
-              <button type="submit" class="ghost-btn">Use token</button>
-            </div>
-            <p class="field-help">Stored locally in this browser only. Most users should sign in with Discord.</p>
-          </form>
+          <div class="integration-grid">
+            <article class="integration-card">
+              <p class="field-label">Continental ID</p>
+              <strong id="continental-badge">Disabled</strong>
+              <p id="continental-detail" class="field-help">
+                Control-center access requires Continental ID with a linked Discord identity.
+              </p>
+            </article>
+            <article class="integration-card">
+              <p class="field-label">License</p>
+              <strong id="license-badge">Disabled</strong>
+              <p id="license-detail" class="field-help">
+                Vanguard license status and entitlements appear here when configured.
+              </p>
+            </article>
+          </div>
         </section>
       </header>
 
@@ -69,8 +71,8 @@
             <p class="eyebrow">Awaiting Access</p>
             <h2>Sign in to manage your server.</h2>
             <p>
-              Use Discord login to load only the Vanguard servers you can moderate. The operator
-              token field is only for instance-wide admin access.
+              Use Continental ID to open the website. Your Continental account must have Discord
+              linked so Vanguard can determine which servers you can moderate.
             </p>
           </section>
 
@@ -90,8 +92,14 @@
                   <span class="status-label">Last trigger</span>
                   <strong id="last-trigger-badge">Never</strong>
                 </div>
+                <div class="status-pill">
+                  <span class="status-label">Guild access</span>
+                  <strong id="guild-access-badge">Authorized</strong>
+                </div>
               </div>
             </div>
+
+            <section id="dashboard-notice" class="notice-banner hidden" aria-live="polite"></section>
 
             <section class="stats-grid">
               <article class="stat-card">

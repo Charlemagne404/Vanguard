@@ -170,11 +170,12 @@ def test_verify_license_requires_verify_url_when_enforced(monkeypatch, tmp_path)
     monkeypatch.setenv("VANGUARD_LICENSE_VERIFY_URL", "")
 
     bot, _ = load_thingamabot(monkeypatch, tmp_path)
-    authorized, reason, allowed = bot.verify_license_sync(bot_user_id=None, guild_count=0)
+    authorized, reason, allowed, entitlements = bot.verify_license_sync(bot_user_id=None, guild_count=0)
 
     assert authorized is False
     assert "not configured" in reason
     assert allowed == set()
+    assert entitlements["ai"] is False
 
 
 def test_resolve_continental_user_sync_returns_linked_payload(monkeypatch, tmp_path):
@@ -207,3 +208,21 @@ def test_resolve_continental_user_sync_returns_linked_payload(monkeypatch, tmp_p
     assert result["ok"] is True
     assert result["linked"] is True
     assert result["body"]["user"]["username"] == "linked.user"
+
+
+def test_normalize_license_entitlements_supports_dashboard_shape(monkeypatch, tmp_path):
+    bot, _ = load_thingamabot(monkeypatch, tmp_path)
+
+    payload = bot.normalize_license_entitlements(
+        {
+            "ai": True,
+            "advancedVotes": True,
+            "guardPresets": ["balanced", "strict", "balanced"],
+        }
+    )
+
+    assert payload == {
+        "ai": True,
+        "advancedVotes": True,
+        "guardPresets": ["balanced", "strict"],
+    }

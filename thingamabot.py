@@ -227,6 +227,9 @@ AI_MODELS_URL = os.getenv("AI_MODELS_URL", f"{AI_SERVER_BASE_URL}/models").strip
 AI_SESSION_URL = os.getenv("AI_SESSION_URL", f"{AI_SERVER_BASE_URL}/session").strip().rstrip("/")
 AI_SERVER_URL = AI_ASK_URL
 CONTINENTAL_ID_BASE_URL = _resolve_optional_base_url(os.getenv("CONTINENTAL_ID_BASE_URL", ""))
+CONTINENTAL_ID_AUTH_BASE_URL = _resolve_optional_base_url(
+    os.getenv("CONTINENTAL_ID_AUTH_BASE_URL", "")
+) or CONTINENTAL_ID_BASE_URL
 CONTINENTAL_ID_HEALTH_URL = _resolve_service_url(
     os.getenv("CONTINENTAL_ID_HEALTH_URL", ""),
     CONTINENTAL_ID_BASE_URL,
@@ -236,6 +239,12 @@ CONTINENTAL_ID_RESOLVE_URL = _resolve_service_url(
     os.getenv("CONTINENTAL_ID_RESOLVE_URL", ""),
     CONTINENTAL_ID_BASE_URL,
     "/api/vanguard/users/resolve",
+)
+CONTINENTAL_ID_LOGIN_URL = (
+    os.getenv("CONTINENTAL_ID_LOGIN_URL", "https://login.continental-hub.com/popup.html").strip()
+)
+CONTINENTAL_ID_DASHBOARD_URL = (
+    os.getenv("CONTINENTAL_ID_DASHBOARD_URL", "https://dashboard.continental-hub.com/?tab=settings").strip()
 )
 AI_REQUEST_TIMEOUT_SECONDS = _parse_env_int("AI_REQUEST_TIMEOUT_SECONDS", 60, minimum=2, maximum=120)
 AI_CHAT_STYLE = os.getenv("AI_CHAT_STYLE", "balanced").strip().lower()
@@ -296,10 +305,6 @@ VANGUARD_CONTROL_CENTER_PORT = _parse_env_int(
     minimum=1,
     maximum=65535,
 )
-VANGUARD_CONTROL_CENTER_CLIENT_ID = os.getenv("VANGUARD_CONTROL_CENTER_CLIENT_ID", "").strip()
-VANGUARD_CONTROL_CENTER_CLIENT_SECRET = os.getenv("VANGUARD_CONTROL_CENTER_CLIENT_SECRET", "").strip()
-VANGUARD_CONTROL_CENTER_REDIRECT_URI = os.getenv("VANGUARD_CONTROL_CENTER_REDIRECT_URI", "").strip()
-VANGUARD_CONTROL_CENTER_TOKEN = os.getenv("VANGUARD_CONTROL_CENTER_TOKEN", "").strip()
 VANGUARD_CONTROL_CENTER_PUBLIC_URL = os.getenv("VANGUARD_CONTROL_CENTER_PUBLIC_URL", "").strip()
 SETTINGS_FILE = resolve_data_file("settings.json")
 REMINDERS_FILE = resolve_data_file("reminders.json")
@@ -885,6 +890,10 @@ def continental_id_configured() -> bool:
     return bool(CONTINENTAL_ID_HEALTH_URL or CONTINENTAL_ID_RESOLVE_URL)
 
 
+def continental_id_auth_configured() -> bool:
+    return bool(CONTINENTAL_ID_AUTH_BASE_URL and CONTINENTAL_ID_LOGIN_URL)
+
+
 def get_control_center_url() -> str:
     return build_control_center_url(
         VANGUARD_CONTROL_CENTER_HOST,
@@ -893,12 +902,102 @@ def get_control_center_url() -> str:
     )
 
 
-def control_center_oauth_configured() -> bool:
-    return bool(
-        VANGUARD_CONTROL_CENTER_CLIENT_ID
-        and VANGUARD_CONTROL_CENTER_CLIENT_SECRET
-        and VANGUARD_CONTROL_CENTER_REDIRECT_URI
-    )
+def get_control_center_continental_status(discord_user_id: int | None) -> dict[str, Any]:
+    if discord_user_id is None:
+        return {
+            "configured": continental_id_configured(),
+            "ok": False,
+            "linked": False,
+            "message": (
+                "Sign in with Continental ID to load account context."
+                if continental_id_configured()
+                else "Continental ID integration is not configured."
+            ),
+            "body": {},
+        }
+    return resolve_continental_user_sync(discord_user_id)
+
+
+def get_control_center_license_state() -> dict[str, Any]:
+    return {
+        "configured": bool(VANGUARD_LICENSE_VERIFY_URL),
+        "required": VANGUARD_REQUIRE_LICENSE,
+        "authorized": license_authorized,
+        "reason": license_reason,
+        "allowed_guild_ids": sorted(get_effective_allowed_guild_ids()),
+        "entitlements": dict(license_entitlements),
+        "last_checked_at": license_last_checked_at.isoformat() if license_last_checked_at else None,
+    }
+
+
+def fetch_continental_me_sync(access_token: str) -> dict[str, Any]:
+    token = str(access_token or "").strip()
+    if not CONTINENTAL_ID_AUTH_BASE_URL:
+        return {
+            "configured": False,
+            "ok": False,
+            "message": "Continental ID auth is not configured.",
+            "user": None,
+        }
+    if not token:
+        return {
+            "configured": True,
+            "ok": False,
+            "message": "Missing Continental ID access token.",
+            "user": None,
+        }
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+    try:
+        response = http_request(
+            "GET",
+            f"{CONTINENTAL_ID_AUTH_BASE_URL}/api/auth/me",
+            headers=headers,
+            timeout=6,
+        )
+    except requests.exceptions.RequestException as exc:
+        return {
+            "configured": True,
+            "ok": False,
+            "message": f"Request error: {exc}",
+            "user": None,
+        }
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    body = payload if isinstance(payload, dict) else {}
+    if response.status_code != 200:
+        message = str(body.get("message") or "").strip()
+        if not message:
+            message = clamp_text(response.text, 240) or f"HTTP {response.status_code}"
+        return {
+            "configured": True,
+            "ok": False,
+            "message": message,
+            "user": None,
+        }
+
+    user = body.get("user")
+    if not isinstance(user, dict):
+        return {
+            "configured": True,
+            "ok": False,
+            "message": "Continental ID returned an invalid account payload.",
+            "user": None,
+        }
+
+    return {
+        "configured": True,
+        "ok": True,
+        "message": "",
+        "user": user,
+    }
 
 
 def resolve_continental_user_sync(discord_user_id: int | str) -> dict[str, Any]:
@@ -1007,6 +1106,27 @@ def parse_allowed_guild_ids(value: Any) -> set[int]:
     return parsed
 
 
+def normalize_license_entitlements(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {
+            "ai": False,
+            "advancedVotes": False,
+            "guardPresets": [],
+        }
+
+    raw_presets = payload.get("guardPresets", payload.get("guard_presets", []))
+    guard_presets = (
+        sorted({str(item).strip().lower() for item in raw_presets if str(item).strip()})
+        if isinstance(raw_presets, list)
+        else []
+    )
+    return {
+        "ai": bool(payload.get("ai")),
+        "advancedVotes": bool(payload.get("advancedVotes", payload.get("advanced_votes"))),
+        "guardPresets": guard_presets,
+    }
+
+
 def get_effective_allowed_guild_ids() -> set[int]:
     allowed = set(VANGUARD_ALLOWED_GUILD_IDS)
     allowed.update(license_allowed_guild_ids)
@@ -1031,11 +1151,11 @@ def get_access_block_reason() -> str | None:
 def verify_license_sync(
     bot_user_id: int | None,
     guild_count: int,
-) -> tuple[bool, str, set[int]]:
+) -> tuple[bool, str, set[int], dict[str, Any]]:
     if not VANGUARD_LICENSE_VERIFY_URL:
         if VANGUARD_REQUIRE_LICENSE:
-            return False, "VANGUARD_LICENSE_VERIFY_URL is not configured.", set()
-        return True, "license checks disabled", set()
+            return False, "VANGUARD_LICENSE_VERIFY_URL is not configured.", set(), normalize_license_entitlements({})
+        return True, "license checks disabled", set(), normalize_license_entitlements({})
 
     payload = {
         "instanceId": VANGUARD_INSTANCE_ID or platform.node() or "vanguard-instance",
@@ -1052,35 +1172,46 @@ def verify_license_sync(
         timeout=8,
     )
     if response.status_code != 200:
-        return False, f"license endpoint returned HTTP {response.status_code}", set()
+        return False, f"license endpoint returned HTTP {response.status_code}", set(), normalize_license_entitlements({})
 
     try:
         body = response.json()
     except ValueError:
-        return False, "license endpoint returned non-JSON response", set()
+        return False, "license endpoint returned non-JSON response", set(), normalize_license_entitlements({})
     if not isinstance(body, dict):
-        return False, "license endpoint returned malformed response", set()
+        return False, "license endpoint returned malformed response", set(), normalize_license_entitlements({})
 
     authorized = bool(body.get("authorized", False))
     reason = str(body.get("reason") or ("authorized" if authorized else "unauthorized"))
     allowed_ids = parse_allowed_guild_ids(
         body.get("allowedGuildIds", body.get("allowed_guild_ids"))
     )
-    return authorized, reason[:240], allowed_ids
+    entitlements = normalize_license_entitlements(body.get("entitlements"))
+    return authorized, reason[:240], allowed_ids, entitlements
 
 
 async def refresh_license_state() -> None:
-    global license_authorized, license_reason, license_allowed_guild_ids, license_last_checked_at
+    global license_authorized, license_reason, license_allowed_guild_ids, license_last_checked_at, license_entitlements
     try:
-        authorized, reason, allowed_ids = await asyncio.to_thread(
+        authorized, reason, allowed_ids, entitlements = await asyncio.to_thread(
             verify_license_sync,
             bot.user.id if bot.user else None,
             len(bot.guilds),
         )
     except requests.exceptions.RequestException as exc:
-        authorized, reason, allowed_ids = False, f"license request error: {exc}", set()
+        authorized, reason, allowed_ids, entitlements = (
+            False,
+            f"license request error: {exc}",
+            set(),
+            normalize_license_entitlements({}),
+        )
     except Exception as exc:
-        authorized, reason, allowed_ids = False, f"license check error: {exc}", set()
+        authorized, reason, allowed_ids, entitlements = (
+            False,
+            f"license check error: {exc}",
+            set(),
+            normalize_license_entitlements({}),
+        )
 
     if VANGUARD_REQUIRE_LICENSE:
         license_authorized = authorized
@@ -1089,6 +1220,7 @@ async def refresh_license_state() -> None:
 
     license_reason = reason
     license_allowed_guild_ids = allowed_ids
+    license_entitlements = entitlements
     license_last_checked_at = datetime.now(timezone.utc)
 
 
@@ -1416,6 +1548,7 @@ license_authorized = not VANGUARD_REQUIRE_LICENSE
 license_reason = "license checks disabled"
 license_allowed_guild_ids: set[int] = set()
 license_last_checked_at: datetime | None = None
+license_entitlements = normalize_license_entitlements({})
 
 
 @bot.check
@@ -1483,42 +1616,44 @@ async def on_ready():
     ) and (license_loop_task is None or license_loop_task.done()):
         license_loop_task = asyncio.create_task(license_worker())
     if VANGUARD_CONTROL_CENTER_ENABLED and control_center_runner is None:
-        if not control_center_oauth_configured() and not VANGUARD_CONTROL_CENTER_TOKEN:
-            print("[CONTROL] Control center not started: configure Discord OAuth or VANGUARD_CONTROL_CENTER_TOKEN.")
-        else:
-            try:
-                control_center_app = create_control_center_app(
-                    bot=bot,
-                    get_guild_config=get_guild_config,
-                    save_settings=save_settings,
-                    normalize_guard_settings=normalize_guard_settings,
-                    resolve_guard_preset_name=resolve_guard_preset_name,
-                    apply_guard_preset=apply_guard_preset,
-                    guard_runtime_stats=guard_runtime_stats,
-                    reminders=reminders,
-                    modlog=modlog,
-                    vote_store=vote_store,
-                    parse_datetime_utc=parse_datetime_utc,
-                    http_request=http_request,
-                    can_access_guild=can_user_manage_control_center_guild,
-                    oauth_client_id=VANGUARD_CONTROL_CENTER_CLIENT_ID or str(bot.application_id or ""),
-                    oauth_client_secret=VANGUARD_CONTROL_CENTER_CLIENT_SECRET,
-                    oauth_redirect_uri=VANGUARD_CONTROL_CENTER_REDIRECT_URI,
-                    public_url=VANGUARD_CONTROL_CENTER_PUBLIC_URL,
-                    site_host=VANGUARD_CONTROL_CENTER_HOST,
-                    site_port=VANGUARD_CONTROL_CENTER_PORT,
-                    control_token=VANGUARD_CONTROL_CENTER_TOKEN,
-                    static_dir=CONTROL_CENTER_STATIC_DIR,
-                    landing_dir=LANDING_SITE_DIR,
+        try:
+            control_center_app = create_control_center_app(
+                bot=bot,
+                get_guild_config=get_guild_config,
+                save_settings=save_settings,
+                normalize_guard_settings=normalize_guard_settings,
+                resolve_guard_preset_name=resolve_guard_preset_name,
+                apply_guard_preset=apply_guard_preset,
+                guard_runtime_stats=guard_runtime_stats,
+                reminders=reminders,
+                modlog=modlog,
+                vote_store=vote_store,
+                parse_datetime_utc=parse_datetime_utc,
+                http_request=http_request,
+                can_access_guild=can_user_manage_control_center_guild,
+                fetch_continental_profile=fetch_continental_me_sync,
+                get_license_state=get_control_center_license_state,
+                continental_login_url=CONTINENTAL_ID_LOGIN_URL,
+                continental_dashboard_url=CONTINENTAL_ID_DASHBOARD_URL,
+                public_url=VANGUARD_CONTROL_CENTER_PUBLIC_URL,
+                site_host=VANGUARD_CONTROL_CENTER_HOST,
+                site_port=VANGUARD_CONTROL_CENTER_PORT,
+                static_dir=CONTROL_CENTER_STATIC_DIR,
+                landing_dir=LANDING_SITE_DIR,
+            )
+            control_center_runner = await start_control_center_site(
+                control_center_app,
+                VANGUARD_CONTROL_CENTER_HOST,
+                VANGUARD_CONTROL_CENTER_PORT,
+            )
+            print(f"[CONTROL] Control center running at {get_control_center_url()}/")
+            if not continental_id_auth_configured():
+                print(
+                    "[CONTROL] Continental ID website auth is not configured. "
+                    "Set CONTINENTAL_ID_AUTH_BASE_URL and CONTINENTAL_ID_LOGIN_URL."
                 )
-                control_center_runner = await start_control_center_site(
-                    control_center_app,
-                    VANGUARD_CONTROL_CENTER_HOST,
-                    VANGUARD_CONTROL_CENTER_PORT,
-                )
-                print(f"[CONTROL] Control center running at {get_control_center_url()}/")
-            except Exception as exc:
-                print(f"[CONTROL] Failed to start control center: {exc}")
+        except Exception as exc:
+            print(f"[CONTROL] Failed to start control center: {exc}")
 
     startup_initialized = True
 
@@ -1947,8 +2082,8 @@ async def status(ctx: commands.Context):
             if control_center_runner is not None
             else "CONFIGURED (waiting for bot ready)"
         )
-        if not control_center_oauth_configured() and not VANGUARD_CONTROL_CENTER_TOKEN:
-            control_status = "MISCONFIGURED (missing OAuth or operator token)"
+        if not continental_id_auth_configured():
+            control_status = "MISCONFIGURED (missing Continental ID auth)"
     else:
         control_status = "DISABLED"
     checks.append(("Control Center", control_status))
@@ -1991,18 +2126,21 @@ async def controlcenter(ctx: commands.Context):
     if not VANGUARD_CONTROL_CENTER_ENABLED:
         await ctx.send("⚠️ Control center is disabled on this Vanguard instance.")
         return
-    if not control_center_oauth_configured() and not VANGUARD_CONTROL_CENTER_TOKEN:
-        await ctx.send(
-            "⚠️ Control center auth is not configured. Set Discord OAuth credentials or "
-            "`VANGUARD_CONTROL_CENTER_TOKEN` in `.env`."
+    message = [
+        "Open the Vanguard control center here:",
+        f"{get_control_center_url()}",
+    ]
+    if not continental_id_auth_configured():
+        message.append(
+            "Website auth is not configured on this instance yet. Set `CONTINENTAL_ID_AUTH_BASE_URL` "
+            "and `CONTINENTAL_ID_LOGIN_URL` in `.env`."
         )
-        return
-    await ctx.send(
-        "Open the Vanguard control center here:\n"
-        f"{get_control_center_url()}\n"
-        "Sign in with Discord to manage only the servers you moderate. "
-        "The operator token still works as an override if it is configured."
-    )
+    else:
+        message.append(
+            "Sign in with Continental ID to use the website. That Continental account must have "
+            "Discord linked, and only servers your linked Discord account can moderate will appear."
+        )
+    await ctx.send("\n".join(message))
 
 
 @bot.hybrid_command()

@@ -115,6 +115,27 @@ h3 {
   gap: 12px;
 }
 
+.integration-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.integration-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 14px;
+}
+
+.integration-card strong {
+  display: block;
+  margin-top: 6px;
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
 .operator-form {
   margin-top: 14px;
   padding-top: 14px;
@@ -250,6 +271,10 @@ textarea:focus {
   font-size: 0.84rem;
 }
 
+.guild-card .guild-card-alert {
+  color: #ffd16a;
+}
+
 .main-panel {
   min-width: 0;
 }
@@ -296,7 +321,7 @@ textarea:focus {
 
 .hero-status {
   display: grid;
-  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
   gap: 12px;
 }
 
@@ -312,6 +337,14 @@ textarea:focus {
   color: var(--muted);
   font-size: 0.8rem;
   margin-bottom: 4px;
+}
+
+.notice-banner {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 209, 106, 0.26);
+  background: rgba(255, 209, 106, 0.08);
+  color: #ffe6b0;
+  padding: 14px 16px;
 }
 
 .stats-grid {
@@ -495,6 +528,10 @@ textarea:focus {
   .auth-row,
   .action-row {
     flex-direction: column;
+  }
+
+  .integration-grid {
+    grid-template-columns: 1fr;
   }
 
   .panel,

@@ -3,9 +3,13 @@ from types import SimpleNamespace
 
 from control_center import (
     apply_guild_control_update,
+    build_guild_authorization,
     build_control_center_url,
     build_guild_detail,
     build_guild_overview,
+    serialize_continental_account_user,
+    serialize_continental_status,
+    serialize_license_state,
 )
 from guard import (
     apply_guard_preset,
@@ -217,3 +221,104 @@ def test_build_control_center_url_appends_control_path_once():
         build_control_center_url("127.0.0.1", 8080, "https://vanguard.example.com/control")
         == "https://vanguard.example.com/control"
     )
+
+
+def test_serialize_continental_status_flattens_resolve_payload():
+    payload = serialize_continental_status(
+        {
+            "configured": True,
+            "ok": True,
+            "linked": True,
+            "message": "resolved",
+            "body": {
+                "user": {
+                    "continentalId": "abc123",
+                    "username": "linked.user",
+                    "displayName": "Linked User",
+                    "verified": True,
+                    "discordLinked": True,
+                },
+                "flags": {
+                    "trusted": True,
+                    "staff": False,
+                    "flagged": True,
+                    "bannedFromAi": False,
+                    "flagReason": "manual review",
+                },
+            },
+        }
+    )
+
+    assert payload["configured"] is True
+    assert payload["linked"] is True
+    assert payload["user"]["continental_id"] == "abc123"
+    assert payload["user"]["display_name"] == "Linked User"
+    assert payload["flags"]["trusted"] is True
+    assert payload["flags"]["flagged"] is True
+    assert payload["flags"]["flag_reason"] == "manual review"
+
+
+def test_serialize_license_state_and_guild_authorization():
+    payload = serialize_license_state(
+        {
+            "configured": True,
+            "required": True,
+            "authorized": True,
+            "reason": "active license",
+            "allowed_guild_ids": [123, 456],
+            "entitlements": {
+                "ai": True,
+                "advancedVotes": True,
+                "guardPresets": ["balanced", "strict"],
+            },
+        }
+    )
+
+    assert payload["mode"] == "required"
+    assert payload["allowed_guild_count"] == 2
+    assert payload["entitlements"]["ai"] is True
+    assert payload["entitlements"]["advanced_votes"] is True
+    assert payload["entitlements"]["guard_presets"] == ["balanced", "strict"]
+
+    authorized = build_guild_authorization(123, payload)
+    blocked = build_guild_authorization(999, payload)
+
+    assert authorized["authorized"] is True
+    assert blocked["authorized"] is False
+    assert blocked["source"] == "allowlist"
+
+
+def test_serialize_continental_account_user_requires_linked_discord_state():
+    payload = serialize_continental_account_user(
+        {
+            "continentalId": "user-1",
+            "username": "charlie",
+            "displayName": "Charlie",
+            "isVerified": True,
+            "profile": {"avatar": "https://cdn.example/avatar.png"},
+            "oauthProviders": {
+                "discord": {
+                    "username": "charliediscord",
+                }
+            },
+            "vanguard": {
+                "linkedDiscord": True,
+                "discordUserId": "1234567890",
+                "trusted": True,
+                "staff": False,
+                "flagged": False,
+                "bannedFromAi": True,
+                "flagReason": "manual block",
+            },
+        }
+    )
+
+    assert payload["configured"] is True
+    assert payload["linked"] is True
+    assert payload["user"]["continental_id"] == "user-1"
+    assert payload["user"]["discord_linked"] is True
+    assert payload["user"]["discord_user_id"] == "1234567890"
+    assert payload["user"]["discord_username"] == "charliediscord"
+    assert payload["flags"]["trusted"] is True
+    assert payload["flags"]["banned_from_ai"] is True
+    assert payload["flags"]["flag_reason"] == "manual block"

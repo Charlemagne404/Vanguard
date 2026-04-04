@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vanguard | Control Center</title>
+    <meta
+      name="description"
+      content="How to access the live Vanguard control center."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Manrope:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg-canvas" aria-hidden="true">
+      <div class="vignette"></div>
+      <div class="stripe-field"></div>
+    </div>
+
+    <header class="topbar container">
+      <a class="brand" href="/" aria-label="Vanguard by Continental">
+        <img
+          class="brand-logo"
+          src="/Images/Continental_Logo_White.png"
+          alt="Continental logo"
+        />
+        <span class="brand-text">
+          <span class="brand-parent">Continental</span>
+          <span class="brand-product">Vanguard</span>
+        </span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/">Home</a>
+        <a href="https://github.com/PClaystation/Vanguard#readme" target="_blank" rel="noreferrer"
+          >Setup</a
+        >
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero container reveal" data-tilt>
+        <div class="hero-banner">
+          <div class="banner-top">
+            <img
+              class="banner-logo"
+              src="/Images/Continental_Logo_White.png"
+              alt="Continental logo"
+            />
+            <p class="banner-org">Made by Continental</p>
+          </div>
+          <h1>CONTROL</h1>
+        </div>
+        <div class="hero-copy">
+          <p class="eyebrow">Live Dashboard</p>
+          <h2>The control center runs inside a live Vanguard instance.</h2>
+          <p class="subtitle">
+            This published site is static documentation only. To use the dashboard, enable the
+            embedded web server in your own Vanguard bot instance and then open that instance's
+            <code>/control/</code> route.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://github.com/PClaystation/Vanguard#readme" target="_blank" rel="noreferrer"
+              >Open Setup Guide</a
+            >
+            <a class="btn btn-ghost" href="/">Return Home</a>
+          </div>
+        </div>
+
+        <aside class="hero-panel" aria-label="Control Center notes">
+          <p class="panel-title">Required Env Vars</p>
+          <div class="panel-line">
+            <span class="dot"></span>
+            <span><code>VANGUARD_CONTROL_CENTER_ENABLED=true</code></span>
+          </div>
+          <div class="panel-line">
+            <span class="dot"></span>
+            <span>Set Discord OAuth credentials or an operator token</span>
+          </div>
+          <div class="panel-line">
+            <span class="dot dot-red"></span>
+            <span>Then browse to your instance URL at <code>/control/</code></span>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="footer container">
+      <p>Vanguard by Continental</p>
+      <p>Independent Vanguard project. Made by Continental.</p>
+      <div class="footer-links">
+        <a href="https://github.com/PClaystation" target="_blank" rel="noreferrer"
+          >GitHub</a
+        >
+        <a href="https://continental-hub.com" target="_blank" rel="noreferrer"
+          >continental-hub.com</a
+        >
+      </div>
+    </footer>
+
+    <script src="/script.js"></script>
+  </body>
+</html>

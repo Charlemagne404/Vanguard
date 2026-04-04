@@ -8,17 +8,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import secrets
 from typing import Any, Awaitable, Callable, Mapping, Sequence
-from urllib.parse import urlencode
 
 from aiohttp import web
 import discord
 
 from guard import GUARD_PRESETS, guard_default_settings, normalize_guard_settings as normalize_guard_profile
 
-AUTH_HEADER = "X-Vanguard-Control-Token"
 SESSION_COOKIE = "vanguard_control_session"
-OAUTH_STATE_COOKIE = "vanguard_oauth_state"
-DISCORD_API_BASE = "https://discord.com/api/v10"
 CONTROL_CENTER_PATH = "/control"
 CONTROL_CENTER_API_PATH = f"{CONTROL_CENTER_PATH}/api"
 CONTROL_CENTER_STATIC_PATH = f"{CONTROL_CENTER_PATH}/static"
@@ -247,6 +243,150 @@ def build_guild_detail(
     return detail
 
 
+def serialize_continental_status(result: Mapping[str, Any] | None) -> dict[str, Any]:
+    payload = dict(result or {})
+    body = payload.get("body")
+    body_map = body if isinstance(body, Mapping) else {}
+    raw_user = body_map.get("user")
+    raw_flags = body_map.get("flags")
+    user = raw_user if isinstance(raw_user, Mapping) else {}
+    flags = raw_flags if isinstance(raw_flags, Mapping) else {}
+
+    return {
+        "configured": bool(payload.get("configured")),
+        "ok": bool(payload.get("ok")),
+        "linked": bool(payload.get("linked")),
+        "message": str(payload.get("message") or ""),
+        "user": {
+            "continental_id": str(user.get("continentalId") or user.get("userId") or ""),
+            "username": str(user.get("username") or ""),
+            "display_name": str(user.get("displayName") or ""),
+            "verified": bool(user.get("verified")),
+            "discord_linked": bool(user.get("discordLinked")),
+        },
+        "flags": {
+            "trusted": bool(flags.get("trusted")),
+            "staff": bool(flags.get("staff")),
+            "flagged": bool(flags.get("flagged")),
+            "banned_from_ai": bool(flags.get("bannedFromAi")),
+            "flag_reason": str(flags.get("flagReason") or ""),
+        },
+    }
+
+
+def serialize_continental_account_user(user_payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    payload = dict(user_payload or {})
+    vanguard = payload.get("vanguard")
+    vanguard_state = vanguard if isinstance(vanguard, Mapping) else {}
+    oauth_providers = payload.get("oauthProviders")
+    oauth_state = oauth_providers if isinstance(oauth_providers, Mapping) else {}
+    discord_oauth = oauth_state.get("discord")
+    discord_state = discord_oauth if isinstance(discord_oauth, Mapping) else {}
+
+    linked = bool(vanguard_state.get("linkedDiscord"))
+    return {
+        "configured": True,
+        "ok": True,
+        "linked": linked,
+        "message": "",
+        "user": {
+            "continental_id": str(payload.get("continentalId") or payload.get("userId") or ""),
+            "username": str(payload.get("username") or ""),
+            "display_name": str(payload.get("displayName") or ""),
+            "verified": bool(payload.get("isVerified")),
+            "discord_linked": linked,
+            "discord_user_id": str(vanguard_state.get("discordUserId") or ""),
+            "avatar_url": str(payload.get("profile", {}).get("avatar") or "")
+            if isinstance(payload.get("profile"), Mapping)
+            else "",
+            "discord_username": str(discord_state.get("username") or ""),
+        },
+        "flags": {
+            "trusted": bool(vanguard_state.get("trusted")),
+            "staff": bool(vanguard_state.get("staff")),
+            "flagged": bool(vanguard_state.get("flagged")),
+            "banned_from_ai": bool(vanguard_state.get("bannedFromAi")),
+            "flag_reason": str(vanguard_state.get("flagReason") or ""),
+        },
+    }
+
+
+def serialize_license_state(raw_state: Mapping[str, Any] | None) -> dict[str, Any]:
+    state = dict(raw_state or {})
+    raw_entitlements = state.get("entitlements")
+    entitlements = raw_entitlements if isinstance(raw_entitlements, Mapping) else {}
+    raw_guard_presets = entitlements.get("guard_presets", entitlements.get("guardPresets", []))
+    guard_presets = [
+        str(item).strip().lower()
+        for item in raw_guard_presets
+        if str(item).strip()
+    ] if isinstance(raw_guard_presets, Sequence) and not isinstance(raw_guard_presets, (str, bytes)) else []
+    allowed_guild_ids = sorted(
+        {
+            guild_id
+            for guild_id in (_coerce_optional_int(value) for value in state.get("allowed_guild_ids", state.get("allowedGuildIds", [])) or [])
+            if guild_id
+        }
+    )
+    last_checked_at = state.get("last_checked_at", state.get("lastCheckedAt"))
+    if isinstance(last_checked_at, datetime):
+        last_checked_text = last_checked_at.astimezone(timezone.utc).isoformat()
+    elif isinstance(last_checked_at, str):
+        last_checked_text = last_checked_at
+    else:
+        last_checked_text = None
+
+    configured = bool(state.get("configured"))
+    required = bool(state.get("required"))
+    authorized = bool(state.get("authorized")) if configured or required else True
+    if required:
+        mode = "required"
+    elif configured:
+        mode = "monitor"
+    else:
+        mode = "disabled"
+
+    return {
+        "configured": configured,
+        "required": required,
+        "authorized": authorized,
+        "mode": mode,
+        "reason": str(state.get("reason") or ""),
+        "allowed_guild_ids": allowed_guild_ids,
+        "allowed_guild_count": len(allowed_guild_ids),
+        "entitlements": {
+            "ai": bool(entitlements.get("ai")),
+            "advanced_votes": bool(entitlements.get("advanced_votes", entitlements.get("advancedVotes"))),
+            "guard_presets": guard_presets,
+        },
+        "last_checked_at": last_checked_text,
+    }
+
+
+def build_guild_authorization(guild_id: int, raw_license_state: Mapping[str, Any] | None) -> dict[str, Any]:
+    license_state = serialize_license_state(raw_license_state)
+    if license_state["required"] and not license_state["authorized"]:
+        return {
+            "authorized": False,
+            "source": "license",
+            "reason": license_state["reason"] or "This Vanguard instance is blocked by its required license check.",
+        }
+
+    allowed_guild_ids = set(license_state["allowed_guild_ids"])
+    if allowed_guild_ids and guild_id not in allowed_guild_ids:
+        return {
+            "authorized": False,
+            "source": "allowlist",
+            "reason": "This guild is outside the current Vanguard allowlist.",
+        }
+
+    return {
+        "authorized": True,
+        "source": "default",
+        "reason": "",
+    }
+
+
 def apply_guild_control_update(
     guild: discord.Guild,
     guild_cfg: dict[str, Any],
@@ -351,25 +491,6 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _avatar_url(user_id: int | str, avatar_hash: str | None) -> str | None:
-    if not avatar_hash:
-        return None
-    return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png?size=128"
-
-
-def _discord_authorize_url(client_id: str, redirect_uri: str, state: str) -> str:
-    query = urlencode(
-        {
-            "response_type": "code",
-            "client_id": client_id,
-            "scope": "identify guilds",
-            "redirect_uri": redirect_uri,
-            "state": state,
-        }
-    )
-    return f"https://discord.com/oauth2/authorize?{query}"
-
-
 def _cookie_secure(redirect_uri: str, public_url: str) -> bool:
     candidate = (public_url or redirect_uri or "").strip().lower()
     return candidate.startswith("https://")
@@ -402,96 +523,49 @@ def create_control_center_app(
     parse_datetime_utc: Callable[[Any], datetime | None],
     http_request: Callable[..., Any],
     can_access_guild: Callable[[discord.Guild, int], Awaitable[bool]],
-    oauth_client_id: str,
-    oauth_client_secret: str,
-    oauth_redirect_uri: str,
+    fetch_continental_profile: Callable[[str], Mapping[str, Any]] | None,
+    get_license_state: Callable[[], Mapping[str, Any]] | None,
+    continental_login_url: str,
+    continental_dashboard_url: str,
     public_url: str,
     site_host: str,
     site_port: int,
-    control_token: str,
     static_dir: str | Path,
     landing_dir: str | Path,
 ) -> web.Application:
     static_root = Path(static_dir)
     landing_root = Path(landing_dir)
-    secure_cookie = _cookie_secure(oauth_redirect_uri, public_url)
-    oauth_enabled = bool(oauth_client_id and oauth_client_secret and oauth_redirect_uri)
+    secure_cookie = _cookie_secure(public_url, "")
+    continental_auth_enabled = bool(fetch_continental_profile and continental_login_url)
     site_base_url = _public_site_base(public_url, site_host, site_port)
     sessions: dict[str, dict[str, Any]] = {}
+
+    def current_license_state() -> dict[str, Any]:
+        if get_license_state is None:
+            return serialize_license_state(None)
+        return serialize_license_state(get_license_state())
 
     def clear_session_token(token: str | None) -> None:
         if token:
             sessions.pop(token, None)
 
-    async def discord_form_post(form_data: Mapping[str, str]) -> dict[str, Any]:
-        return await asyncio.to_thread(
-            lambda: http_request(
-                "POST",
-                f"{DISCORD_API_BASE}/oauth2/token",
-                data=form_data,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                auth=(oauth_client_id, oauth_client_secret),
-                timeout=10,
-            )
-        )
-
-    async def exchange_code(code: str) -> dict[str, Any]:
-        response = await discord_form_post(
-            {
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": oauth_redirect_uri,
-            }
-        )
-        response.raise_for_status()
-        return response.json()
-
-    async def refresh_session_tokens(session_payload: dict[str, Any]) -> dict[str, Any] | None:
-        refresh_token = str(session_payload.get("refresh_token") or "").strip()
-        if not refresh_token:
-            return None
-        try:
-            response = await discord_form_post(
-                {
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                }
-            )
-            response.raise_for_status()
-        except Exception:
-            return None
-        token_payload = response.json()
-        session_payload["access_token"] = str(token_payload.get("access_token") or "")
-        session_payload["refresh_token"] = str(token_payload.get("refresh_token") or refresh_token)
-        expires_in = int(token_payload.get("expires_in") or 0)
-        session_payload["expires_at"] = (_utc_now() + timedelta(seconds=max(60, expires_in))).isoformat()
-        session_payload["guild_cache"] = None
-        return session_payload
-
-    async def discord_api_get(path: str, access_token: str) -> Any:
-        response = await asyncio.to_thread(
-            lambda: http_request(
-                "GET",
-                f"{DISCORD_API_BASE}{path}",
-                headers={"Authorization": f"Bearer {access_token}"},
-                timeout=10,
-            )
-        )
-        response.raise_for_status()
-        return response.json()
-
-    def build_session_payload(token_payload: Mapping[str, Any], user_payload: Mapping[str, Any]) -> dict[str, Any]:
-        expires_in = int(token_payload.get("expires_in") or 0)
-        user_id = _coerce_optional_int(user_payload.get("id")) or 0
+    def build_session_payload(continental: Mapping[str, Any], manageable_guild_ids: Sequence[int]) -> dict[str, Any]:
+        user = continental.get("user")
+        user_state = user if isinstance(user, Mapping) else {}
         return {
-            "user_id": user_id,
-            "username": str(user_payload.get("username") or "Discord user"),
-            "global_name": str(user_payload.get("global_name") or ""),
-            "avatar_url": _avatar_url(user_id, str(user_payload.get("avatar") or "")),
-            "access_token": str(token_payload.get("access_token") or ""),
-            "refresh_token": str(token_payload.get("refresh_token") or ""),
-            "expires_at": (_utc_now() + timedelta(seconds=max(60, expires_in))).isoformat(),
-            "guild_cache": None,
+            "continental": dict(continental),
+            "continental_id": str(user_state.get("continental_id") or ""),
+            "discord_user_id": _coerce_optional_int(user_state.get("discord_user_id")) or 0,
+            "username": str(user_state.get("display_name") or user_state.get("username") or "Continental user"),
+            "avatar_url": str(user_state.get("avatar_url") or ""),
+            "manageable_guild_ids": sorted(
+                {
+                    guild_id
+                    for guild_id in (_coerce_optional_int(item) for item in manageable_guild_ids)
+                    if guild_id
+                }
+            ),
+            "expires_at": (_utc_now() + timedelta(days=7)).isoformat(),
         }
 
     async def get_session_from_cookie(request: web.Request) -> dict[str, Any] | None:
@@ -507,80 +581,73 @@ def create_control_center_app(
             clear_session_token(session_token)
             return None
 
-        if expires_at <= _utc_now() + timedelta(minutes=5):
-            refreshed = await refresh_session_tokens(session_payload)
-            if refreshed is None:
-                clear_session_token(session_token)
-                return None
-            session_payload = refreshed
+        if expires_at <= _utc_now():
+            clear_session_token(session_token)
+            return None
 
         request["session_token"] = session_token
         return session_payload
 
-    async def get_session_user_guild_ids(session_payload: dict[str, Any]) -> set[int]:
-        cached = session_payload.get("guild_cache")
-        cached_at = parse_datetime_utc(cached.get("cached_at")) if isinstance(cached, dict) else None
-        if cached_at and cached_at > _utc_now() - timedelta(minutes=2):
-            return {
-                guild_id
-                for guild_id in (
-                    _coerce_optional_int(item) for item in cached.get("guild_ids", [])
-                )
-                if guild_id
-            }
+    async def build_manageable_guild_ids(discord_user_id: int) -> set[int]:
+        manageable: set[int] = set()
+        if discord_user_id <= 0:
+            return manageable
+        for guild in bot.guilds:
+            if await can_access_guild(guild, discord_user_id):
+                manageable.add(guild.id)
+        return manageable
 
-        try:
-            guild_payloads = await discord_api_get("/users/@me/guilds", str(session_payload.get("access_token") or ""))
-        except Exception:
-            return set()
+    async def exchange_continental_token(access_token: str) -> tuple[dict[str, Any] | None, str]:
+        if fetch_continental_profile is None:
+            return None, "Continental ID auth is not configured for this control center."
+        result = await asyncio.to_thread(fetch_continental_profile, access_token)
+        payload = dict(result or {})
+        if not payload.get("ok"):
+            return None, str(payload.get("message") or "Continental ID authentication failed.")
 
-        guild_ids = {
-            guild_id
-            for guild_id in (
-                _coerce_optional_int(item.get("id")) if isinstance(item, dict) else None
-                for item in guild_payloads if isinstance(guild_payloads, list)
+        user = payload.get("user")
+        if not isinstance(user, Mapping):
+            return None, "Continental ID did not return an account payload."
+
+        continental = serialize_continental_account_user(user)
+        if not continental["user"]["verified"]:
+            return None, "Verify your Continental ID email before using the Vanguard control center."
+        if not continental["linked"] or not continental["user"]["discord_user_id"]:
+            return (
+                None,
+                "Your Continental ID account must have Discord linked before it can access the Vanguard control center.",
             )
-            if guild_id
-        }
-        session_payload["guild_cache"] = {
-            "cached_at": _utc_now().isoformat(),
-            "guild_ids": sorted(guild_ids),
-        }
-        return guild_ids
+
+        discord_user_id = _coerce_optional_int(continental["user"]["discord_user_id"]) or 0
+        manageable_guild_ids = await build_manageable_guild_ids(discord_user_id)
+        if not manageable_guild_ids:
+            return None, "Your linked Discord account does not currently have Vanguard control access in any server."
+
+        session_payload = build_session_payload(continental, sorted(manageable_guild_ids))
+        return session_payload, ""
 
     async def get_request_auth(request: web.Request) -> dict[str, Any] | None:
-        supplied = request.headers.get(AUTH_HEADER, "").strip()
-        if not supplied:
-            authorization = request.headers.get("Authorization", "").strip()
-            if authorization.lower().startswith("bearer "):
-                supplied = authorization[7:].strip()
-        if control_token and supplied == control_token:
-            return {
-                "mode": "operator",
-                "user_id": None,
-                "username": "Operator",
-                "avatar_url": None,
-                "manageable_guild_ids": {guild.id for guild in bot.guilds},
-            }
-
         session_payload = await get_session_from_cookie(request)
         if not session_payload:
             return None
 
-        guild_ids = await get_session_user_guild_ids(session_payload)
-        manageable: set[int] = set()
-        user_id = int(session_payload["user_id"])
-        for guild in bot.guilds:
-            if guild.id not in guild_ids:
-                continue
-            if await can_access_guild(guild, user_id):
-                manageable.add(guild.id)
+        discord_user_id = _coerce_optional_int(session_payload.get("discord_user_id")) or 0
+        manageable = await build_manageable_guild_ids(discord_user_id)
+        continental = session_payload.get("continental")
+        continental_state = continental if isinstance(continental, Mapping) else {}
+        user_state = continental_state.get("user")
+        flags_state = continental_state.get("flags")
+        user = user_state if isinstance(user_state, Mapping) else {}
+        flags = flags_state if isinstance(flags_state, Mapping) else {}
 
         return {
-            "mode": "discord",
-            "user_id": user_id,
-            "username": str(session_payload.get("global_name") or session_payload.get("username") or "Discord user"),
-            "avatar_url": session_payload.get("avatar_url"),
+            "mode": "continental",
+            "user_id": str(user.get("continental_id") or session_payload.get("continental_id") or ""),
+            "discord_user_id": discord_user_id,
+            "username": str(user.get("display_name") or user.get("username") or session_payload.get("username") or "Continental user"),
+            "avatar_url": str(user.get("avatar_url") or session_payload.get("avatar_url") or ""),
+            "continental": dict(continental_state),
+            "flags": dict(flags),
             "manageable_guild_ids": manageable,
         }
 
@@ -588,7 +655,10 @@ def create_control_center_app(
     async def auth_middleware(request: web.Request, handler: Callable[[web.Request], Any]) -> web.StreamResponse:
         if not request.path.startswith(f"{CONTROL_CENTER_API_PATH}/"):
             return await handler(request)
-        if request.path == f"{CONTROL_CENTER_API_PATH}/session":
+        if request.path in {
+            f"{CONTROL_CENTER_API_PATH}/session",
+            f"{CONTROL_CENTER_API_PATH}/session/exchange",
+        }:
             return await handler(request)
         auth = await get_request_auth(request)
         if auth is None:
@@ -619,17 +689,28 @@ def create_control_center_app(
             return web.json_response(
                 {
                     "authenticated": False,
-                    "oauth_enabled": oauth_enabled,
-                    "operator_token_enabled": bool(control_token),
                     "control_path": CONTROL_CENTER_PATH,
                     "site_base_url": site_base_url,
+                    "continental_required": True,
+                    "continental_login_url": continental_login_url,
+                    "continental_dashboard_url": continental_dashboard_url,
+                    "continental_auth_enabled": continental_auth_enabled,
+                    "continental": {
+                        "configured": continental_auth_enabled,
+                        "ok": False,
+                        "linked": False,
+                        "message": (
+                            "Sign in with Continental ID, then make sure Discord is linked on that account."
+                            if continental_auth_enabled
+                            else "Continental ID auth is not configured for this control center."
+                        ),
+                    },
+                    "license": current_license_state(),
                 }
             )
         return web.json_response(
             {
                 "authenticated": True,
-                "oauth_enabled": oauth_enabled,
-                "operator_token_enabled": bool(control_token),
                 "control_path": CONTROL_CENTER_PATH,
                 "site_base_url": site_base_url,
                 "mode": auth["mode"],
@@ -638,43 +719,55 @@ def create_control_center_app(
                     "name": auth.get("username"),
                     "avatar_url": auth.get("avatar_url"),
                 },
+                "continental_required": True,
+                "continental_login_url": continental_login_url,
+                "continental_dashboard_url": continental_dashboard_url,
+                "continental_auth_enabled": continental_auth_enabled,
+                "continental": auth.get("continental"),
+                "license": current_license_state(),
             }
         )
 
-    async def auth_login(_: web.Request) -> web.StreamResponse:
-        if not oauth_enabled:
-            return web.Response(status=503, text="Discord OAuth is not configured.")
-        state = secrets.token_urlsafe(24)
-        response = web.HTTPFound(_discord_authorize_url(oauth_client_id, oauth_redirect_uri, state))
-        response.set_cookie(
-            OAUTH_STATE_COOKIE,
-            state,
-            httponly=True,
-            secure=secure_cookie,
-            samesite="Lax",
-            path="/",
-            max_age=600,
-        )
-        raise response
+    async def session_exchange(request: web.Request) -> web.StreamResponse:
+        authorization = str(request.headers.get("Authorization") or "").strip()
+        access_token = ""
+        if authorization.lower().startswith("bearer "):
+            access_token = authorization[7:].strip()
+        if not access_token:
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+            if isinstance(payload, Mapping):
+                access_token = str(payload.get("accessToken") or payload.get("token") or "").strip()
+        if not access_token:
+            return web.json_response({"error": "Continental ID access token required."}, status=401)
 
-    async def auth_callback(request: web.Request) -> web.StreamResponse:
-        if not oauth_enabled:
-            return web.Response(status=503, text="Discord OAuth is not configured.")
-        returned_state = str(request.query.get("state") or "")
-        expected_state = request.cookies.get(OAUTH_STATE_COOKIE, "")
-        code = str(request.query.get("code") or "")
-        if not returned_state or not expected_state or returned_state != expected_state or not code:
-            return web.Response(status=400, text="OAuth validation failed.")
-
-        try:
-            token_payload = await exchange_code(code)
-            user_payload = await discord_api_get("/users/@me", str(token_payload.get("access_token") or ""))
-        except Exception:
-            return web.Response(status=502, text="Discord OAuth exchange failed.")
+        session_payload, error_message = await exchange_continental_token(access_token)
+        if session_payload is None:
+            return web.json_response(
+                {
+                    "error": error_message or "Continental ID sign-in could not be verified.",
+                    "continental_dashboard_url": continental_dashboard_url,
+                },
+                status=403,
+            )
 
         session_token = secrets.token_urlsafe(32)
-        sessions[session_token] = build_session_payload(token_payload, user_payload)
-        response = web.HTTPFound(CONTROL_CENTER_PATH + "/")
+        sessions[session_token] = session_payload
+        response = web.json_response(
+            {
+                "authenticated": True,
+                "mode": "continental",
+                "user": {
+                    "id": session_payload.get("continental_id"),
+                    "name": session_payload.get("username"),
+                    "avatar_url": session_payload.get("avatar_url"),
+                },
+                "continental": session_payload.get("continental"),
+                "license": current_license_state(),
+            }
+        )
         response.set_cookie(
             SESSION_COOKIE,
             session_token,
@@ -684,14 +777,12 @@ def create_control_center_app(
             path="/",
             max_age=60 * 60 * 24 * 7,
         )
-        response.del_cookie(OAUTH_STATE_COOKIE, path="/")
-        raise response
+        return response
 
     async def auth_logout(request: web.Request) -> web.StreamResponse:
         clear_session_token(request.cookies.get(SESSION_COOKIE))
         response = web.json_response({"ok": True})
         response.del_cookie(SESSION_COOKIE, path="/")
-        response.del_cookie(OAUTH_STATE_COOKIE, path="/")
         return response
 
     def get_manageable_guilds(auth: Mapping[str, Any]) -> list[discord.Guild]:
@@ -704,6 +795,7 @@ def create_control_center_app(
     async def guild_list(request: web.Request) -> web.StreamResponse:
         auth = request["auth"]
         guilds = get_manageable_guilds(auth)
+        license_state = current_license_state()
         payload = {
             "bot": {
                 "name": getattr(getattr(bot, "user", None), "name", "Vanguard"),
@@ -714,16 +806,20 @@ def create_control_center_app(
                 "mode": auth.get("mode"),
                 "name": auth.get("username"),
             },
+            "license": license_state,
             "guilds": [
-                build_guild_overview(
-                    guild,
-                    get_guild_config(guild.id),
-                    guard_runtime_stats=guard_runtime_stats,
-                    reminders=reminders,
-                    modlog=modlog,
-                    vote_store=vote_store,
-                    parse_datetime_utc=parse_datetime_utc,
-                )
+                {
+                    **build_guild_overview(
+                        guild,
+                        get_guild_config(guild.id),
+                        guard_runtime_stats=guard_runtime_stats,
+                        reminders=reminders,
+                        modlog=modlog,
+                        vote_store=vote_store,
+                        parse_datetime_utc=parse_datetime_utc,
+                    ),
+                    "authorization": build_guild_authorization(guild.id, license_state),
+                }
                 for guild in guilds
             ],
         }
@@ -737,6 +833,7 @@ def create_control_center_app(
             return web.json_response({"error": "Guild not found."}, status=404)
         if guild.id not in set(auth.get("manageable_guild_ids", set())):
             return web.json_response({"error": "Forbidden."}, status=403)
+        license_state = current_license_state()
         payload = build_guild_detail(
             guild,
             get_guild_config(guild.id),
@@ -747,6 +844,8 @@ def create_control_center_app(
             parse_datetime_utc=parse_datetime_utc,
             normalize_guard_settings=normalize_guard_settings,
         )
+        payload["authorization"] = build_guild_authorization(guild.id, license_state)
+        payload["license"] = license_state
         return web.json_response(payload)
 
     async def update_guild(request: web.Request) -> web.StreamResponse:
@@ -775,6 +874,7 @@ def create_control_center_app(
             return web.json_response({"errors": errors}, status=400)
 
         save_settings()
+        license_state = current_license_state()
         response_payload = build_guild_detail(
             guild,
             guild_cfg,
@@ -785,6 +885,8 @@ def create_control_center_app(
             parse_datetime_utc=parse_datetime_utc,
             normalize_guard_settings=normalize_guard_settings,
         )
+        response_payload["authorization"] = build_guild_authorization(guild.id, license_state)
+        response_payload["license"] = license_state
         return web.json_response(response_payload)
 
     app.router.add_get("/", landing_index)
@@ -793,10 +895,9 @@ def create_control_center_app(
     app.router.add_get("/404.html", landing_404)
     app.router.add_get(CONTROL_CENTER_PATH, index)
     app.router.add_get(CONTROL_CENTER_PATH + "/", index)
-    app.router.add_get(f"{CONTROL_CENTER_AUTH_PATH}/login", auth_login)
-    app.router.add_get(f"{CONTROL_CENTER_AUTH_PATH}/callback", auth_callback)
     app.router.add_post(f"{CONTROL_CENTER_AUTH_PATH}/logout", auth_logout)
     app.router.add_get(f"{CONTROL_CENTER_API_PATH}/session", session_info)
+    app.router.add_post(f"{CONTROL_CENTER_API_PATH}/session/exchange", session_exchange)
     app.router.add_get(f"{CONTROL_CENTER_API_PATH}/guilds", guild_list)
     app.router.add_get(f"{CONTROL_CENTER_API_PATH}/guilds/{{guild_id}}", guild_detail)
     app.router.add_put(f"{CONTROL_CENTER_API_PATH}/guilds/{{guild_id}}", update_guild)
