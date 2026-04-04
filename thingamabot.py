@@ -147,6 +147,25 @@ def _resolve_ai_base_url(explicit_base_url: str, legacy_url: str) -> str:
     return candidate
 
 
+def _resolve_optional_base_url(explicit_base_url: str) -> str:
+    return explicit_base_url.strip().rstrip("/")
+
+
+def _resolve_service_url(
+    explicit_url: str,
+    base_url: str,
+    path: str,
+    legacy_default: str = "",
+) -> str:
+    explicit = explicit_url.strip()
+    legacy = legacy_default.strip()
+    if explicit and not (base_url and legacy and explicit == legacy):
+        return explicit
+    if base_url:
+        return f"{base_url}{path}"
+    return legacy
+
+
 def _extract_ai_answer(payload: Any) -> str:
     if isinstance(payload, str):
         return payload.strip()
@@ -201,6 +220,17 @@ AI_HEALTH_URL = os.getenv("AI_HEALTH_URL", f"{AI_SERVER_BASE_URL}/health").strip
 AI_MODELS_URL = os.getenv("AI_MODELS_URL", f"{AI_SERVER_BASE_URL}/models").strip()
 AI_SESSION_URL = os.getenv("AI_SESSION_URL", f"{AI_SERVER_BASE_URL}/session").strip().rstrip("/")
 AI_SERVER_URL = AI_ASK_URL
+CONTINENTAL_ID_BASE_URL = _resolve_optional_base_url(os.getenv("CONTINENTAL_ID_BASE_URL", ""))
+CONTINENTAL_ID_HEALTH_URL = _resolve_service_url(
+    os.getenv("CONTINENTAL_ID_HEALTH_URL", ""),
+    CONTINENTAL_ID_BASE_URL,
+    "/api/vanguard/health",
+)
+CONTINENTAL_ID_RESOLVE_URL = _resolve_service_url(
+    os.getenv("CONTINENTAL_ID_RESOLVE_URL", ""),
+    CONTINENTAL_ID_BASE_URL,
+    "/api/vanguard/users/resolve",
+)
 AI_REQUEST_TIMEOUT_SECONDS = _parse_env_int("AI_REQUEST_TIMEOUT_SECONDS", 20, minimum=2, maximum=120)
 AI_CHAT_STYLE = os.getenv("AI_CHAT_STYLE", "balanced").strip().lower()
 if AI_CHAT_STYLE not in {"concise", "balanced", "detailed"}:
@@ -214,8 +244,18 @@ AI_TEMPERATURE = _parse_env_optional_float("AI_TEMPERATURE", minimum=0.0, maximu
 AI_TOP_P = _parse_env_optional_float("AI_TOP_P", minimum=0.0, maximum=1.0)
 AI_NUM_PREDICT = _parse_env_optional_int("AI_NUM_PREDICT", minimum=1, maximum=4096)
 AI_REPEAT_PENALTY = _parse_env_optional_float("AI_REPEAT_PENALTY", minimum=0.8, maximum=2.0)
-FLAG_USER_URL = os.getenv("FLAG_USER_URL", "http://localhost:3001/fuck")
-UNFLAG_USER_URL = os.getenv("UNFLAG_USER_URL", "http://localhost:3001/unfuck")
+FLAG_USER_URL = _resolve_service_url(
+    os.getenv("FLAG_USER_URL", ""),
+    CONTINENTAL_ID_BASE_URL,
+    "/api/vanguard/users/flag",
+    legacy_default="http://localhost:3001/fuck",
+)
+UNFLAG_USER_URL = _resolve_service_url(
+    os.getenv("UNFLAG_USER_URL", ""),
+    CONTINENTAL_ID_BASE_URL,
+    "/api/vanguard/users/unflag",
+    legacy_default="http://localhost:3001/unfuck",
+)
 VANGUARD_INSTANCE_ID = os.getenv("VANGUARD_INSTANCE_ID", "").strip()
 VANGUARD_BACKEND_API_KEY = os.getenv("VANGUARD_BACKEND_API_KEY", "").strip()
 VANGUARD_BACKEND_KEY_HEADER = (
@@ -227,7 +267,11 @@ VANGUARD_INSTANCE_HEADER = (
     or "X-Vanguard-Instance-Id"
 )
 VANGUARD_ALLOWED_GUILD_IDS = _parse_env_int_set("VANGUARD_ALLOWED_GUILD_IDS")
-VANGUARD_LICENSE_VERIFY_URL = os.getenv("VANGUARD_LICENSE_VERIFY_URL", "").strip()
+VANGUARD_LICENSE_VERIFY_URL = _resolve_service_url(
+    os.getenv("VANGUARD_LICENSE_VERIFY_URL", ""),
+    CONTINENTAL_ID_BASE_URL,
+    "/api/vanguard/license/verify",
+)
 VANGUARD_LICENSE_KEY = os.getenv("VANGUARD_LICENSE_KEY", "").strip()
 VANGUARD_REQUIRE_LICENSE = _parse_env_bool("VANGUARD_REQUIRE_LICENSE", False)
 VANGUARD_LICENSE_RECHECK_SECONDS = _parse_env_int(
@@ -812,6 +856,102 @@ def _get_http_session() -> requests.Session:
 
 def http_request(method: str, url: str, **kwargs: Any) -> requests.Response:
     return _get_http_session().request(method=method, url=url, **kwargs)
+
+
+def continental_id_configured() -> bool:
+    return bool(CONTINENTAL_ID_HEALTH_URL or CONTINENTAL_ID_RESOLVE_URL)
+
+
+def resolve_continental_user_sync(discord_user_id: int | str) -> dict[str, Any]:
+    normalized_id = str(discord_user_id or "").strip()
+    if not normalized_id:
+        return {
+            "configured": continental_id_configured(),
+            "ok": False,
+            "linked": False,
+            "message": "Missing Discord user ID.",
+            "status_code": None,
+            "body": {},
+        }
+    if not CONTINENTAL_ID_RESOLVE_URL:
+        return {
+            "configured": False,
+            "ok": False,
+            "linked": False,
+            "message": "Continental ID integration is not configured.",
+            "status_code": None,
+            "body": {},
+        }
+
+    headers = build_backend_headers()
+    try:
+        response = http_request(
+            "POST",
+            CONTINENTAL_ID_RESOLVE_URL,
+            json={"discordUserId": normalized_id},
+            headers=headers or None,
+            timeout=6,
+        )
+    except requests.exceptions.RequestException as exc:
+        return {
+            "configured": True,
+            "ok": False,
+            "linked": False,
+            "message": f"Request error: {exc}",
+            "status_code": None,
+            "body": {},
+        }
+
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    payload = body if isinstance(body, dict) else {}
+    if response.status_code != 200:
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            message = clamp_text(response.text, 240) or f"HTTP {response.status_code}"
+        return {
+            "configured": True,
+            "ok": False,
+            "linked": False,
+            "message": message,
+            "status_code": response.status_code,
+            "body": payload,
+        }
+
+    return {
+        "configured": True,
+        "ok": True,
+        "linked": bool(payload.get("linked")),
+        "message": "",
+        "status_code": response.status_code,
+        "body": payload,
+    }
+
+
+def format_continental_flags(flags: Any) -> str:
+    if not isinstance(flags, dict):
+        return "none"
+
+    labels: list[str] = []
+    if bool(flags.get("trusted")):
+        labels.append("trusted")
+    if bool(flags.get("staff")):
+        labels.append("staff")
+    if bool(flags.get("flagged")):
+        labels.append("flagged")
+    if bool(flags.get("bannedFromAi")):
+        labels.append("ai-blocked")
+    return ", ".join(labels) if labels else "none"
+
+
+def format_continental_timestamp(value: Any) -> str:
+    parsed = parse_datetime_utc(value)
+    if parsed is None:
+        return "Unknown"
+    return parsed.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def parse_allowed_guild_ids(value: Any) -> set[int]:
@@ -1480,7 +1620,7 @@ async def help_command(ctx: commands.Context, *, command_name: str | None = None
     embed.add_field(
         name="General",
         value=(
-            "`help` `status` `serverinfo` `userinfo` `avatar` "
+            "`help` `status` `serverinfo` `userinfo` `avatar` `continentalid` "
             "`voteinfo` `activevotes` `voteconfig` `ops`"
         ),
         inline=False,
@@ -1682,6 +1822,27 @@ async def status(ctx: commands.Context):
 
     checks.append(("AI Backend", ai_status))
     checks.append(("AI Models", model_status))
+    continental_status = "DISABLED"
+    resolve_status = "ON" if CONTINENTAL_ID_RESOLVE_URL else "OFF"
+    if CONTINENTAL_ID_HEALTH_URL:
+        try:
+            continental_response = await asyncio.to_thread(
+                http_request,
+                "GET",
+                CONTINENTAL_ID_HEALTH_URL,
+                headers=backend_headers or None,
+                timeout=4,
+            )
+            if continental_response.status_code == 200:
+                continental_status = "OK"
+            else:
+                continental_status = f"HTTP {continental_response.status_code}"
+        except Exception:
+            continental_status = "UNREACHABLE"
+    elif continental_id_configured():
+        continental_status = "CONFIGURED"
+    checks.append(("Continental ID", continental_status))
+    checks.append(("Resolve API", resolve_status))
     if VANGUARD_REQUIRE_LICENSE:
         license_status = "OK" if license_authorized else f"BLOCKED ({license_reason})"
     elif VANGUARD_LICENSE_VERIFY_URL:
@@ -1752,6 +1913,88 @@ async def userinfo(ctx: commands.Context, member: discord.Member | None = None):
     embed.add_field(name="Top Role", value=target.top_role.mention if target.top_role else "None", inline=True)
     embed.add_field(name="Roles", value=", ".join(roles[-10:]) if roles else "None", inline=False)
     embed.set_thumbnail(url=target.display_avatar.url)
+    await ctx.send(embed=embed)
+
+
+@bot.hybrid_command(name="continentalid")
+@commands.cooldown(3, 30, commands.BucketType.user)
+async def continentalid(ctx: commands.Context, member: discord.Member | None = None):
+    """Show Continental ID link status for yourself or, with Manage Server, another member."""
+    target = member or ctx.author
+    target_id = getattr(target, "id", None)
+    if target_id is None:
+        await safe_ctx_send(ctx, "❌ Could not resolve user.")
+        return
+
+    viewer_is_privileged = await bot.is_owner(ctx.author)
+    if not viewer_is_privileged and ctx.guild and isinstance(ctx.author, discord.Member):
+        viewer_is_privileged = ctx.author.guild_permissions.manage_guild
+
+    if getattr(target, "id", None) != ctx.author.id and not viewer_is_privileged:
+        await safe_ctx_send(
+            ctx,
+            "⛔ You can only check your own Continental ID link unless you can manage this server.",
+        )
+        return
+
+    result = await asyncio.to_thread(resolve_continental_user_sync, target_id)
+    if not result.get("configured"):
+        await safe_ctx_send(ctx, "Continental ID integration is not configured on this Vanguard instance.")
+        return
+    if not result.get("ok"):
+        status_code = result.get("status_code")
+        message = str(result.get("message") or "Unknown error")
+        if status_code is None:
+            await safe_ctx_send(ctx, f"⚠️ Continental ID lookup failed. `{message}`")
+        else:
+            await safe_ctx_send(
+                ctx,
+                f"⚠️ Continental ID lookup failed (HTTP {status_code}). `{message}`",
+            )
+        return
+
+    payload = result.get("body", {})
+    user_payload = payload.get("user") if isinstance(payload, dict) else {}
+    flags = payload.get("flags") if isinstance(payload, dict) else {}
+    target_name = target.display_name if isinstance(target, discord.Member) else getattr(target, "name", "User")
+    embed = discord.Embed(title=f"Continental ID: {target_name}", color=discord.Color.red())
+    if hasattr(target, "display_avatar"):
+        embed.set_thumbnail(url=target.display_avatar.url)
+
+    if not bool(payload.get("linked")) or not isinstance(user_payload, dict):
+        embed.description = (
+            f"{target.mention} is not linked to Continental ID."
+            if hasattr(target, "mention")
+            else "This Discord account is not linked to Continental ID."
+        )
+        await ctx.send(embed=embed)
+        return
+
+    embed.add_field(name="Username", value=f"`@{user_payload.get('username') or 'unknown'}`", inline=True)
+    embed.add_field(name="Display Name", value=str(user_payload.get("displayName") or "User"), inline=True)
+    embed.add_field(name="Verified", value="YES" if user_payload.get("verified") else "NO", inline=True)
+
+    if viewer_is_privileged:
+        embed.add_field(name="Flags", value=format_continental_flags(flags), inline=False)
+        embed.add_field(
+            name="Discord User ID",
+            value=f"`{user_payload.get('discordUserId') or target_id}`",
+            inline=False,
+        )
+        embed.add_field(
+            name="Linked At",
+            value=format_continental_timestamp(user_payload.get("linkedAt")),
+            inline=True,
+        )
+        embed.add_field(
+            name="Last Used",
+            value=format_continental_timestamp(user_payload.get("lastUsedAt")),
+            inline=True,
+        )
+        flag_reason = str(flags.get("flagReason") or "").strip() if isinstance(flags, dict) else ""
+        if flag_reason:
+            embed.add_field(name="Flag Reason", value=flag_reason[:240], inline=False)
+
     await ctx.send(embed=embed)
 
 

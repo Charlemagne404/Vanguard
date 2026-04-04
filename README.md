@@ -14,6 +14,7 @@ This repository is source-available, not open-source.
 - Moderation commands: lockdown, timeout, warn, purge, undo/cases
 - Community commands: reminders, poll/choose/roll, server/user info
 - Ops features: status checks, guard mode, advanced vote tracking (custom ballots, elections, runoff, quorum/threshold rules, and auto-executed action votes via `/voteaction`), AI chat relay with session memory (`/vanguard`) and reset (`/vanguardreset`)
+- Identity hooks: optional Continental ID account lookup via `/continentalid`
 - Policy commands: privacy and terms
 
 ## Requirements
@@ -56,6 +57,9 @@ Environment variables are read from `.env` (via `python-dotenv`) or your shell.
 - `AI_HEALTH_URL` (default: `${AI_SERVER_BASE_URL}/health`)
 - `AI_MODELS_URL` (default: `${AI_SERVER_BASE_URL}/models`)
 - `AI_SESSION_URL` (default: `${AI_SERVER_BASE_URL}/session`)
+- `CONTINENTAL_ID_BASE_URL` (optional base URL for Continental ID service integration)
+- `CONTINENTAL_ID_HEALTH_URL` (optional override, default: `${CONTINENTAL_ID_BASE_URL}/api/vanguard/health`)
+- `CONTINENTAL_ID_RESOLVE_URL` (optional override, default: `${CONTINENTAL_ID_BASE_URL}/api/vanguard/users/resolve`)
 - `AI_REQUEST_TIMEOUT_SECONDS` (default: `20`)
 - `AI_CHAT_STYLE` (`concise|balanced|detailed`, default: `balanced`)
 - `AI_HISTORY_MESSAGES` (default: `12`, max: `24`)
@@ -67,14 +71,14 @@ Environment variables are read from `.env` (via `python-dotenv`) or your shell.
 - `AI_TOP_P` (optional, range `0..1`)
 - `AI_NUM_PREDICT` (optional, range `1..4096`)
 - `AI_REPEAT_PENALTY` (optional, range `0.8..2`)
-- `FLAG_USER_URL` (default: `http://localhost:3001/fuck`)
-- `UNFLAG_USER_URL` (default: `http://localhost:3001/unfuck`)
+- `FLAG_USER_URL` (default: legacy backend URL, or `${CONTINENTAL_ID_BASE_URL}/api/vanguard/users/flag` when using Continental ID)
+- `UNFLAG_USER_URL` (default: legacy backend URL, or `${CONTINENTAL_ID_BASE_URL}/api/vanguard/users/unflag` when using Continental ID)
 - `VANGUARD_BACKEND_API_KEY` (optional secret header value used for AI/backend requests)
 - `VANGUARD_BACKEND_KEY_HEADER` (default: `X-Vanguard-Api-Key`)
 - `VANGUARD_INSTANCE_ID` (optional instance identifier sent to backend/license service)
 - `VANGUARD_INSTANCE_HEADER` (default: `X-Vanguard-Instance-Id`)
 - `VANGUARD_ALLOWED_GUILD_IDS` (optional comma-separated guild allowlist)
-- `VANGUARD_LICENSE_VERIFY_URL` (optional endpoint returning `{ authorized: boolean, reason?: string, allowedGuildIds?: number[] }`)
+- `VANGUARD_LICENSE_VERIFY_URL` (optional override, default: `${CONTINENTAL_ID_BASE_URL}/api/vanguard/license/verify` when using Continental ID)
 - `VANGUARD_LICENSE_KEY` (optional bearer token for license verification)
 - `VANGUARD_REQUIRE_LICENSE` (default: `false`; when `true`, commands are blocked if license check fails)
 - `VANGUARD_LICENSE_RECHECK_SECONDS` (default: `900`, range: `60..86400`)

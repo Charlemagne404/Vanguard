@@ -108,6 +108,27 @@ def test_ai_endpoints_derive_from_legacy_ask_url(monkeypatch, tmp_path):
     assert bot.AI_SESSION_URL == "http://localhost:3001/session"
 
 
+def test_continental_endpoints_derive_from_base_url(monkeypatch, tmp_path):
+    for key in (
+        "CONTINENTAL_ID_BASE_URL",
+        "CONTINENTAL_ID_HEALTH_URL",
+        "CONTINENTAL_ID_RESOLVE_URL",
+        "VANGUARD_LICENSE_VERIFY_URL",
+        "FLAG_USER_URL",
+        "UNFLAG_USER_URL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("CONTINENTAL_ID_BASE_URL", "http://localhost:5000")
+
+    bot, _ = load_thingamabot(monkeypatch, tmp_path)
+
+    assert bot.CONTINENTAL_ID_HEALTH_URL == "http://localhost:5000/api/vanguard/health"
+    assert bot.CONTINENTAL_ID_RESOLVE_URL == "http://localhost:5000/api/vanguard/users/resolve"
+    assert bot.VANGUARD_LICENSE_VERIFY_URL == "http://localhost:5000/api/vanguard/license/verify"
+    assert bot.FLAG_USER_URL == "http://localhost:5000/api/vanguard/users/flag"
+    assert bot.UNFLAG_USER_URL == "http://localhost:5000/api/vanguard/users/unflag"
+
+
 def test_extract_ai_answer_supports_nested_shapes(monkeypatch, tmp_path):
     bot, _ = load_thingamabot(monkeypatch, tmp_path)
 
@@ -152,3 +173,35 @@ def test_verify_license_requires_verify_url_when_enforced(monkeypatch, tmp_path)
     assert authorized is False
     assert "not configured" in reason
     assert allowed == set()
+
+
+def test_resolve_continental_user_sync_returns_linked_payload(monkeypatch, tmp_path):
+    monkeypatch.setenv("CONTINENTAL_ID_RESOLVE_URL", "http://localhost:5000/api/vanguard/users/resolve")
+
+    bot, _ = load_thingamabot(monkeypatch, tmp_path)
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "linked": True,
+                "user": {
+                    "username": "linked.user",
+                    "displayName": "Linked User",
+                },
+                "flags": {
+                    "trusted": True,
+                    "flagged": False,
+                },
+            }
+
+    monkeypatch.setattr(bot, "http_request", lambda *args, **kwargs: FakeResponse())
+
+    result = bot.resolve_continental_user_sync("123456789012345678")
+
+    assert result["configured"] is True
+    assert result["ok"] is True
+    assert result["linked"] is True
+    assert result["body"]["user"]["username"] == "linked.user"
