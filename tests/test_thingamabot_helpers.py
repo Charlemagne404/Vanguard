@@ -5,6 +5,7 @@ from pathlib import Path
 
 def load_thingamabot(monkeypatch, tmp_path):
     data_dir = tmp_path / "data"
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("VANGUARD_DATA_DIR", str(data_dir))
     for module_name in ("thingamabot", "guard", "vote", "data_paths"):
         sys.modules.pop(module_name, None)

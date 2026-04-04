@@ -49,7 +49,7 @@ from vote import (
     votes as vote_store,
 )
 
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"))
 
 def _parse_env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
