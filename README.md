@@ -60,7 +60,7 @@ Environment variables are read from `.env` (via `python-dotenv`) or your shell.
 - `CONTINENTAL_ID_BASE_URL` (optional base URL for Continental ID service integration)
 - `CONTINENTAL_ID_HEALTH_URL` (optional override, default: `${CONTINENTAL_ID_BASE_URL}/api/vanguard/health`)
 - `CONTINENTAL_ID_RESOLVE_URL` (optional override, default: `${CONTINENTAL_ID_BASE_URL}/api/vanguard/users/resolve`)
-- `AI_REQUEST_TIMEOUT_SECONDS` (default: `20`)
+- `AI_REQUEST_TIMEOUT_SECONDS` (default: `60`)
 - `AI_CHAT_STYLE` (`concise|balanced|detailed`, default: `balanced`)
 - `AI_HISTORY_MESSAGES` (default: `12`, max: `24`)
 - `AI_USE_CONTEXT` (default: `true`)

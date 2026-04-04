@@ -231,7 +231,7 @@ CONTINENTAL_ID_RESOLVE_URL = _resolve_service_url(
     CONTINENTAL_ID_BASE_URL,
     "/api/vanguard/users/resolve",
 )
-AI_REQUEST_TIMEOUT_SECONDS = _parse_env_int("AI_REQUEST_TIMEOUT_SECONDS", 20, minimum=2, maximum=120)
+AI_REQUEST_TIMEOUT_SECONDS = _parse_env_int("AI_REQUEST_TIMEOUT_SECONDS", 60, minimum=2, maximum=120)
 AI_CHAT_STYLE = os.getenv("AI_CHAT_STYLE", "balanced").strip().lower()
 if AI_CHAT_STYLE not in {"concise", "balanced", "detailed"}:
     AI_CHAT_STYLE = "balanced"
@@ -2515,47 +2515,69 @@ async def vanguard(ctx: commands.Context, *, question: str):
         title_text = "AI Response"
         answer = ""
         used_chat_endpoint = False
+        chat_timeout = False
+        chat_unreachable = False
         try:
             chat_status_code: int | None = None
-            chat_response = await asyncio.to_thread(
-                http_request,
-                "POST",
-                AI_CHAT_URL,
-                json=chat_payload,
-                headers=backend_headers or None,
-                timeout=AI_REQUEST_TIMEOUT_SECONDS,
-            )
-            if chat_response.status_code == 200:
-                try:
-                    data = chat_response.json()
-                except ValueError:
-                    data = {}
-                answer = _extract_ai_answer(data)
-                used_chat_endpoint = bool(answer)
-            else:
-                chat_status_code = chat_response.status_code
-
-            if not answer:
-                response = await asyncio.to_thread(
+            try:
+                chat_response = await asyncio.to_thread(
                     http_request,
                     "POST",
-                    AI_ASK_URL,
-                    json=ask_payload,
+                    AI_CHAT_URL,
+                    json=chat_payload,
                     headers=backend_headers or None,
                     timeout=AI_REQUEST_TIMEOUT_SECONDS,
                 )
-                if response.status_code == 200:
+                if chat_response.status_code == 200:
                     try:
-                        data = response.json()
+                        data = chat_response.json()
                     except ValueError:
                         data = {}
                     answer = _extract_ai_answer(data)
-                    if not answer:
-                        answer = "No response from the AI service."
+                    used_chat_endpoint = bool(answer)
                 else:
-                    status_code = chat_status_code if chat_status_code is not None else response.status_code
-                    title_text = f"AI service returned HTTP {status_code}."
-                    answer = response.text
+                    chat_status_code = chat_response.status_code
+            except requests.exceptions.Timeout:
+                chat_timeout = True
+            except requests.exceptions.ConnectionError:
+                chat_unreachable = True
+
+            if not answer:
+                try:
+                    response = await asyncio.to_thread(
+                        http_request,
+                        "POST",
+                        AI_ASK_URL,
+                        json=ask_payload,
+                        headers=backend_headers or None,
+                        timeout=AI_REQUEST_TIMEOUT_SECONDS,
+                    )
+                    if response.status_code == 200:
+                        try:
+                            data = response.json()
+                        except ValueError:
+                            data = {}
+                        answer = _extract_ai_answer(data)
+                        if not answer:
+                            answer = "No response from the AI service."
+                        if chat_timeout:
+                            title_text = "AI Response (chat fallback)"
+                        elif chat_unreachable:
+                            title_text = "AI Response (compatibility fallback)"
+                    else:
+                        status_code = chat_status_code if chat_status_code is not None else response.status_code
+                        title_text = f"AI service returned HTTP {status_code}."
+                        answer = response.text
+                except requests.exceptions.Timeout:
+                    if chat_timeout or chat_unreachable:
+                        title_text = "AI service is currently unreachable."
+                    else:
+                        title_text = "AI compatibility endpoint timed out."
+                except requests.exceptions.ConnectionError:
+                    if chat_timeout or chat_unreachable:
+                        title_text = "AI service is currently unreachable."
+                    else:
+                        title_text = "AI compatibility endpoint is unreachable."
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
             title_text = "AI service is currently unreachable."
         except Exception:

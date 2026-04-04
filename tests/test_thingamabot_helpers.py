@@ -165,7 +165,8 @@ def test_parse_allowed_guild_ids_skips_invalid_values(monkeypatch, tmp_path):
 
 def test_verify_license_requires_verify_url_when_enforced(monkeypatch, tmp_path):
     monkeypatch.setenv("VANGUARD_REQUIRE_LICENSE", "true")
-    monkeypatch.delenv("VANGUARD_LICENSE_VERIFY_URL", raising=False)
+    monkeypatch.setenv("CONTINENTAL_ID_BASE_URL", "")
+    monkeypatch.setenv("VANGUARD_LICENSE_VERIFY_URL", "")
 
     bot, _ = load_thingamabot(monkeypatch, tmp_path)
     authorized, reason, allowed = bot.verify_license_sync(bot_user_id=None, guild_count=0)
