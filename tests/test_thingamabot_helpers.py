@@ -167,6 +167,17 @@ def test_commands_are_registered_only_as_slash_commands(monkeypatch, tmp_path):
     assert {"help", "status", "guard", "votecreate", "banner", "installcontext", "mutualservers"}.issubset(tree_commands)
 
 
+def test_ai_commands_are_registered_with_new_names(monkeypatch, tmp_path):
+    bot, _ = load_thingamabot(monkeypatch, tmp_path)
+
+    tree_commands = {command.name for command in bot.bot.tree.walk_commands()}
+
+    assert "ai" in tree_commands
+    assert "aireset" in tree_commands
+    assert "vanguard" not in tree_commands
+    assert "vanguardreset" not in tree_commands
+
+
 def test_account_install_commands_allow_user_installs(monkeypatch, tmp_path):
     bot, _ = load_thingamabot(monkeypatch, tmp_path)
 
@@ -286,6 +297,72 @@ def test_resolve_continental_user_sync_returns_linked_payload(monkeypatch, tmp_p
     assert result["ok"] is True
     assert result["linked"] is True
     assert result["body"]["user"]["username"] == "linked.user"
+
+
+def test_get_ai_access_requirement_message_requires_continental_link(monkeypatch, tmp_path):
+    bot, _ = load_thingamabot(monkeypatch, tmp_path)
+
+    message = bot.get_ai_access_requirement_message(
+        {
+            "configured": True,
+            "ok": True,
+            "linked": False,
+            "body": {
+                "linked": False,
+                "user": {
+                    "discordLinked": False,
+                },
+                "flags": {},
+            },
+        }
+    )
+
+    assert message is not None
+    assert "link your Continental ID account" in message
+
+
+def test_get_ai_access_requirement_message_allows_linked_accounts(monkeypatch, tmp_path):
+    bot, _ = load_thingamabot(monkeypatch, tmp_path)
+
+    message = bot.get_ai_access_requirement_message(
+        {
+            "configured": True,
+            "ok": True,
+            "linked": True,
+            "body": {
+                "linked": True,
+                "user": {
+                    "discordLinked": True,
+                },
+                "flags": {},
+            },
+        }
+    )
+
+    assert message is None
+
+
+def test_get_ai_access_requirement_message_blocks_ai_bans(monkeypatch, tmp_path):
+    bot, _ = load_thingamabot(monkeypatch, tmp_path)
+
+    message = bot.get_ai_access_requirement_message(
+        {
+            "configured": True,
+            "ok": True,
+            "linked": True,
+            "body": {
+                "linked": True,
+                "user": {
+                    "discordLinked": True,
+                },
+                "flags": {
+                    "bannedFromAi": True,
+                },
+            },
+        }
+    )
+
+    assert message == "⛔ Your Continental ID account is not allowed to use Vanguard AI."
 
 
 def test_normalize_license_entitlements_supports_dashboard_shape(monkeypatch, tmp_path):

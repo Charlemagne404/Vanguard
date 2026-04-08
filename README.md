@@ -14,7 +14,7 @@ This repository is source-available, not open-source.
 - Moderation commands: lockdown, timeout, warn, purge, undo/cases
 - Community commands: reminders, poll/choose/roll, server/user info
 - User install commands: personal reminders, AI chat, avatar/banner lookups, mutual server listing, and install-context detection
-- Ops features: status checks, guard mode, advanced vote tracking (custom ballots, elections, runoff, quorum/threshold rules, and auto-executed action votes via `/voteaction`), AI chat relay with session memory (`/vanguard`) and reset (`/vanguardreset`)
+- Ops features: status checks, guard mode, advanced vote tracking (custom ballots, elections, runoff, quorum/threshold rules, and auto-executed action votes via `/voteaction`), AI chat relay with session memory (`/ai`) and reset (`/aireset`)
 - Identity hooks: optional Continental ID account lookup via `/continentalid`
 - Policy commands: privacy and terms
 

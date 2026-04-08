@@ -1131,6 +1131,45 @@ def format_continental_timestamp(value: Any) -> str:
     return parsed.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def get_ai_access_requirement_message(continental_result: Any) -> str | None:
+    result = continental_result if isinstance(continental_result, dict) else {}
+    if not result.get("configured"):
+        return "⛔ Vanguard AI requires a linked Continental ID account, but Continental ID integration is not configured on this Vanguard instance."
+
+    if not result.get("ok"):
+        message = str(result.get("message") or "Unknown error").strip()
+        if message:
+            return f"⚠️ I couldn't verify your Continental ID account right now. `{message}`"
+        return "⚠️ I couldn't verify your Continental ID account right now."
+
+    body = result.get("body")
+    payload = body if isinstance(body, dict) else {}
+    user_payload = payload.get("user")
+    user = user_payload if isinstance(user_payload, dict) else {}
+    flags_payload = payload.get("flags")
+    flags = flags_payload if isinstance(flags_payload, dict) else {}
+
+    if not bool(payload.get("linked")) or not bool(user.get("discordLinked")):
+        return (
+            "⛔ You must link your Continental ID account to your Discord account before you can use Vanguard AI. "
+            "Use `/continentalid` to check your link status."
+        )
+
+    if bool(flags.get("bannedFromAi")):
+        return "⛔ Your Continental ID account is not allowed to use Vanguard AI."
+
+    return None
+
+
+async def require_ai_access(ctx: commands.Context) -> bool:
+    result = await asyncio.to_thread(resolve_continental_user_sync, ctx.author.id)
+    denial_message = get_ai_access_requirement_message(result)
+    if denial_message:
+        await safe_ctx_send(ctx, denial_message)
+        return False
+    return True
+
+
 def parse_allowed_guild_ids(value: Any) -> set[int]:
     if not isinstance(value, list):
         return set()
@@ -1588,8 +1627,8 @@ ACCOUNT_INSTALL_COMMAND_NAMES = {
     "remindme",
     "reminders",
     "cancelreminder",
-    "vanguard",
-    "vanguardreset",
+    "ai",
+    "aireset",
     "flaguser",
     "unflaguser",
     "owneronly",
@@ -1646,8 +1685,8 @@ PERSONAL_HELP_COMMANDS = (
     "remindme",
     "reminders",
     "cancelreminder",
-    "vanguard",
-    "vanguardreset",
+    "ai",
+    "aireset",
     "privacy",
     "tos",
 )
@@ -3092,11 +3131,13 @@ async def undo(ctx: commands.Context, case_id: int):
     await ctx.send(f"✅ Undid case `{case_id}` ({action}).")
 
 
-@bot.tree.command()
+@bot.tree.command(name="ai")
 @app_commands.checks.cooldown(3, 30.0, key=_user_cooldown_key)
-async def vanguard(ctx: commands.Context, *, question: str):
+async def ai(ctx: commands.Context, *, question: str):
     """Ask the AI server and keep channel-local memory for follow-up questions."""
     ctx = await commands.Context.from_interaction(ctx)
+    if not await require_ai_access(ctx):
+        return
     async with ctx.typing():
         backend_headers = build_backend_headers()
         ask_payload = {
@@ -3207,11 +3248,13 @@ async def vanguard(ctx: commands.Context, *, question: str):
     await ctx.send(embed=embed)
 
 
-@bot.tree.command(name="vanguardreset")
+@bot.tree.command(name="aireset")
 @app_commands.checks.cooldown(3, 30.0, key=_user_cooldown_key)
-async def vanguardreset(ctx: commands.Context):
+async def aireset(ctx: commands.Context):
     """Clear your AI chat memory for this channel."""
     ctx = await commands.Context.from_interaction(ctx)
+    if not await require_ai_access(ctx):
+        return
     session_id = _build_ai_session_id(
         ctx.guild.id if ctx.guild else None,
         getattr(ctx.channel, "id", None),
