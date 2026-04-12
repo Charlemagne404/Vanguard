@@ -67,11 +67,14 @@ Environment variables are read from `.env` (via `python-dotenv`) or your shell.
 - `AI_USE_CONTEXT` (default: `true`)
 - `AI_USE_CACHE` (default: `true`)
 - `AI_INCLUDE_DEBUG` (default: `false`)
-- `AI_MODEL` (optional model override for `/chat`)
+- `AI_MODEL` (optional model override for `/ai`)
 - `AI_TEMPERATURE` (optional, range `0..2`)
 - `AI_TOP_P` (optional, range `0..1`)
 - `AI_NUM_PREDICT` (optional, range `1..4096`)
 - `AI_REPEAT_PENALTY` (optional, range `0.8..2`)
+- `CONTINENTAL_ID_AUTH_BASE_URL` (optional website auth API base URL; defaults to `CONTINENTAL_ID_BASE_URL` when omitted)
+- `CONTINENTAL_ID_LOGIN_URL` (default: `https://login.continental-hub.com/popup.html`)
+- `CONTINENTAL_ID_DASHBOARD_URL` (default: `https://dashboard.continental-hub.com/?tab=settings`)
 - `FLAG_USER_URL` (default: legacy backend URL, or `${CONTINENTAL_ID_BASE_URL}/api/vanguard/users/flag` when using Continental ID)
 - `UNFLAG_USER_URL` (default: legacy backend URL, or `${CONTINENTAL_ID_BASE_URL}/api/vanguard/users/unflag` when using Continental ID)
 - `VANGUARD_BACKEND_API_KEY` (optional secret header value used for AI/backend requests)
@@ -86,10 +89,6 @@ Environment variables are read from `.env` (via `python-dotenv`) or your shell.
 - `VANGUARD_CONTROL_CENTER_ENABLED` (default: `false`; starts the web dashboard inside the bot process)
 - `VANGUARD_CONTROL_CENTER_HOST` (default: `127.0.0.1`)
 - `VANGUARD_CONTROL_CENTER_PORT` (default: `8080`)
-- `VANGUARD_CONTROL_CENTER_CLIENT_ID` (Discord application client ID for OAuth login; usually your app/application ID)
-- `VANGUARD_CONTROL_CENTER_CLIENT_SECRET` (Discord OAuth client secret)
-- `VANGUARD_CONTROL_CENTER_REDIRECT_URI` (registered Discord OAuth callback URL, for example `http://127.0.0.1:8080/control/auth/callback`)
-- `VANGUARD_CONTROL_CENTER_TOKEN` (optional operator override token for full-instance access; normal users should log in with Discord)
 - `VANGUARD_CONTROL_CENTER_PUBLIC_URL` (optional URL advertised by `/controlcenter`; useful when the bot is reverse-proxied)
 - `VANGUARD_GUILD_JOIN_NOTIFY_USER_ID` (optional Discord user ID to DM whenever Vanguard joins a server)
 - `PRIVACY_POLICY_URL` (optional)
@@ -133,20 +132,22 @@ Vanguard now includes an embedded control center website for per-server configur
 VANGUARD_CONTROL_CENTER_ENABLED=true
 VANGUARD_CONTROL_CENTER_HOST=127.0.0.1
 VANGUARD_CONTROL_CENTER_PORT=8080
-VANGUARD_CONTROL_CENTER_CLIENT_ID=your-discord-application-id
-VANGUARD_CONTROL_CENTER_CLIENT_SECRET=your-discord-client-secret
-VANGUARD_CONTROL_CENTER_REDIRECT_URI=http://127.0.0.1:8080/control/auth/callback
+CONTINENTAL_ID_AUTH_BASE_URL=https://your-continental-id-service
+CONTINENTAL_ID_LOGIN_URL=https://login.continental-hub.com/popup.html
+# optional:
+# CONTINENTAL_ID_DASHBOARD_URL=https://dashboard.continental-hub.com/?tab=settings
 ```
 
 2. Start the bot and open `http://127.0.0.1:8080` for the branded site.
-3. Sign in with Discord.
-4. The dashboard will only show Vanguard guilds where the signed-in user can already moderate/configure the bot.
-5. Pick a guild and update:
+3. Sign in with Continental ID.
+4. The Continental account used for sign-in must already be linked to the Discord account that can moderate/configure the bot.
+5. The dashboard will only show Vanguard guilds where that linked Discord account can already manage Vanguard.
+6. Pick a guild and update:
    - welcome channel, welcome role, and welcome message
    - ops/log channels, lockdown role, and extra mod roles
    - guard presets plus advanced anti-raid thresholds
 
-The public landing page is served at `/` and the authenticated control center lives at `/control/` on the same website. The optional `VANGUARD_CONTROL_CENTER_TOKEN` still works as an operator override if you need full-instance access. The `/controlcenter` command shows the configured dashboard URL to moderators. By default the site binds to localhost; if you expose it behind a reverse proxy, set `VANGUARD_CONTROL_CENTER_PUBLIC_URL`, use an HTTPS callback URL, and keep the operator token secret.
+The public landing page is served at `/` and the authenticated control center lives at `/control/` on the same website. The `/controlcenter` command shows the configured dashboard URL to moderators. Website auth requires `CONTINENTAL_ID_AUTH_BASE_URL` and `CONTINENTAL_ID_LOGIN_URL`; `CONTINENTAL_ID_DASHBOARD_URL` is optional but improves the linked-account recovery flow. By default the site binds to localhost; if you expose it behind a reverse proxy, set `VANGUARD_CONTROL_CENTER_PUBLIC_URL` and use HTTPS.
 
 ## Testing and Linting
 
