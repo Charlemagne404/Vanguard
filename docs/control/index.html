@@ -3,10 +3,46 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vanguard | Control Center</title>
+    <title>Vanguard Control Center | Discord Bot Dashboard Access Guide</title>
     <meta
       name="description"
-      content="How to access the live Vanguard control center."
+      content="Learn how to access the Vanguard Control Center, the web dashboard for Discord server setup, guard tuning, welcome flow, and moderation operations routing."
+    />
+    <meta
+      name="robots"
+      content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+    />
+    <meta name="theme-color" content="#98050e" />
+    <link rel="canonical" href="https://vanguard.continental-hub.com/control/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Vanguard" />
+    <meta
+      property="og:title"
+      content="Vanguard Control Center | Discord Bot Dashboard Access Guide"
+    />
+    <meta
+      property="og:description"
+      content="How to access the Vanguard Control Center for Discord server setup, guard tuning, welcome flow, and moderation operations routing."
+    />
+    <meta property="og:url" content="https://vanguard.continental-hub.com/control/" />
+    <meta
+      property="og:image"
+      content="https://vanguard.continental-hub.com/Images/Bot_Logo.png"
+    />
+    <meta property="og:image:alt" content="Vanguard Discord bot logo" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Vanguard Control Center | Discord Bot Dashboard Access Guide"
+    />
+    <meta
+      name="twitter:description"
+      content="How to access the Vanguard Control Center for Discord server setup, guard tuning, welcome flow, and moderation operations routing."
+    />
+    <meta
+      name="twitter:image"
+      content="https://vanguard.continental-hub.com/Images/Bot_Logo.png"
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -14,8 +50,55 @@
       href="https://fonts.googleapis.com/css2?family=Anton&family=Manrope:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/png" href="/Images/Bot_Logo.png" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/favicon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <link
+      rel="alternate"
+      type="application/json"
+      href="/data.json"
+      title="Vanguard site data"
+    />
     <link rel="stylesheet" href="/styles.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "name": "Vanguard Control Center",
+            "url": "https://vanguard.continental-hub.com/control/",
+            "description": "Access guide for the Vanguard Control Center, the web dashboard for Discord server setup, guard tuning, welcome flow, and moderation operations routing.",
+            "isPartOf": {
+              "@type": "WebSite",
+              "name": "Vanguard",
+              "url": "https://vanguard.continental-hub.com/"
+            }
+          },
+          {
+            "@type": "HowTo",
+            "name": "How to access the Vanguard Control Center",
+            "step": [
+              {
+                "@type": "HowToStep",
+                "name": "Enable the control center",
+                "text": "Enable the embedded Vanguard control center in your environment so your bot can serve the dashboard."
+              },
+              {
+                "@type": "HowToStep",
+                "name": "Configure Continental ID authentication",
+                "text": "Configure Continental ID authentication and link the Discord account that manages the target server."
+              },
+              {
+                "@type": "HowToStep",
+                "name": "Open the live control route",
+                "text": "Visit your Vanguard deployment at the /control/ route to manage welcome flow, guard settings, and operations routing."
+              }
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div class="bg-canvas" aria-hidden="true">
@@ -57,13 +140,14 @@
           <h1>CONTROL CENTER</h1>
         </div>
         <div class="hero-copy">
-          <p class="eyebrow">Live Dashboard Access</p>
-          <h2>Run the Control Center from your own Vanguard deployment.</h2>
+          <p class="eyebrow">Discord Bot Dashboard Access</p>
+          <h2>Run the Vanguard Control Center from your own deployment.</h2>
           <p class="subtitle">
-            This published site is documentation only. The actual dashboard is
+            This published page is documentation only. The actual dashboard is
             served by a live Vanguard instance after you enable the embedded web
-            server and Continental ID authentication flow, then open that instance's
-            <code>/control/</code> route.
+            server and Continental ID authentication flow, then open that
+            instance's <code>/control/</code> route for Discord server setup and
+            moderation operations management.
           </p>
           <div class="hero-actions">
             <a class="btn btn-primary" href="https://github.com/Charlemagne404/Vanguard#readme" target="_blank" rel="noreferrer"
@@ -101,6 +185,12 @@
       <section class="section container reveal">
         <p class="section-kicker">Access Flow</p>
         <h3>Three clean steps to open the live dashboard.</h3>
+        <p class="section-lead">
+          The Control Center is the web dashboard for Vanguard. It gives server
+          operators a cleaner place to review welcome flow, guard settings,
+          moderation routing, and per-server configuration without relying only
+          on slash commands inside Discord.
+        </p>
         <div class="control-access-grid">
           <article class="control-access-card">
             <p class="control-label">Step 1</p>
@@ -140,6 +230,34 @@
           >
         </div>
       </section>
+
+      <section class="section container reveal">
+        <p class="section-kicker">What You Manage</p>
+        <h3>Use the dashboard for the parts of Vanguard that benefit from a broader view.</h3>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <h3>Welcome Flow</h3>
+            <p>
+              Configure welcome channels, role handoff, and onboarding copy for
+              each Discord server from one dashboard surface.
+            </p>
+          </article>
+          <article class="feature-card">
+            <h3>Guard Tuning</h3>
+            <p>
+              Review guard presets and advanced anti-raid thresholds for joins,
+              mentions, duplicates, and link spam without memorizing commands.
+            </p>
+          </article>
+          <article class="feature-card">
+            <h3>Ops Routing</h3>
+            <p>
+              Set log channels, operations visibility, lockdown scope, and other
+              moderation workflow details in a cleaner configuration view.
+            </p>
+          </article>
+        </div>
+      </section>
     </main>
 
     <footer class="footer container">
@@ -149,6 +267,8 @@
         <a href="https://github.com/Charlemagne404" target="_blank" rel="noreferrer"
           >GitHub</a
         >
+        <a href="/terms-of-service.html">Terms</a>
+        <a href="/privacy-policy.html">Privacy</a>
         <a href="https://continental-hub.com" target="_blank" rel="noreferrer"
           >continental-hub.com</a
         >

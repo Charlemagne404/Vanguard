@@ -1,0 +1,24 @@
+{
+  "name": "Vanguard",
+  "short_name": "Vanguard",
+  "description": "Discord moderation bot with anti-raid guardrails, voting workflows, reminders, AI features, and a control center.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#2a0004",
+  "theme_color": "#98050e",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "1000x1000",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/Images/Bot_Logo.png",
+      "sizes": "1000x1000",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

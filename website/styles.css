@@ -878,6 +878,97 @@ h3 {
   letter-spacing: 0.8px;
 }
 
+.faq-grid {
+  margin-top: 22px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.faq-item {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 144, 144, 0.38);
+  background: linear-gradient(145deg, rgba(25, 0, 3, 0.84), rgba(111, 0, 12, 0.45));
+  padding: 18px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
+}
+
+.faq-item::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 42%);
+  pointer-events: none;
+}
+
+.faq-item h4 {
+  margin: 0 0 8px;
+  font-family: "Anton", sans-serif;
+  font-size: 1.18rem;
+  letter-spacing: 0.3px;
+}
+
+.faq-item p {
+  margin: 0;
+  color: #ffe5e5;
+  font-size: 0.92rem;
+}
+
+.faq-item a {
+  color: #fff3d8;
+}
+
+.legal-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.legal-card {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 149, 149, 0.38);
+  background: linear-gradient(155deg, rgba(19, 0, 2, 0.9), rgba(112, 0, 12, 0.52));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+  padding: clamp(18px, 2.2vw, 28px);
+}
+
+.legal-meta {
+  margin: 0 0 14px;
+  color: #ffd2d2;
+  font-size: 0.88rem;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.legal-prose {
+  color: #fff0f0;
+}
+
+.legal-prose h3 {
+  margin: 20px 0 8px;
+  font-family: "Anton", sans-serif;
+  font-size: 1.18rem;
+  letter-spacing: 0.3px;
+}
+
+.legal-prose p,
+.legal-prose ul {
+  margin: 0 0 12px;
+}
+
+.legal-prose ul {
+  padding-left: 20px;
+}
+
+.legal-prose li + li {
+  margin-top: 7px;
+}
+
+.legal-prose a {
+  color: #fff3d8;
+}
+
 .cta-box {
   margin-top: 14px;
   border: 1px solid rgba(255, 149, 149, 0.46);
@@ -1001,6 +1092,7 @@ h3 {
   }
 
   .command-list,
+  .faq-grid,
   .vote-showcase {
     grid-template-columns: 1fr;
   }

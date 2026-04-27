@@ -3,16 +3,99 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vanguard | Discord Moderation + Utility Bot</title>
-    <meta name="description" content="Vanguard Discord bot website." />
+    <title>Vanguard Discord Bot | Moderation, Anti-Raid, Voting, Control Center</title>
+    <meta
+      name="description"
+      content="Vanguard is a Discord moderation bot with anti-raid protection, slash-command utilities, structured voting, reminders, AI workflows, and an optional Control Center for server management."
+    />
+    <meta
+      name="robots"
+      content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+    />
+    <meta name="theme-color" content="#98050e" />
+    <link rel="canonical" href="https://vanguard.continental-hub.com/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Vanguard" />
+    <meta
+      property="og:title"
+      content="Vanguard Discord Bot | Moderation, Anti-Raid, Voting, Control Center"
+    />
+    <meta
+      property="og:description"
+      content="Discord moderation bot for anti-raid protection, utility commands, voting workflows, reminders, and a cleaner web control center."
+    />
+    <meta property="og:url" content="https://vanguard.continental-hub.com/" />
+    <meta
+      property="og:image"
+      content="https://vanguard.continental-hub.com/Images/Bot_Logo.png"
+    />
+    <meta property="og:image:alt" content="Vanguard Discord bot logo" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Vanguard Discord Bot | Moderation, Anti-Raid, Voting, Control Center"
+    />
+    <meta
+      name="twitter:description"
+      content="Discord moderation bot for anti-raid protection, utility commands, voting workflows, reminders, and a cleaner web control center."
+    />
+    <meta
+      name="twitter:image"
+      content="https://vanguard.continental-hub.com/Images/Bot_Logo.png"
+    />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Anton&family=Manrope:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/png" href="./Images/Bot_Logo.png" />
+    <link rel="icon" type="image/png" href="./favicon.png" />
+    <link rel="apple-touch-icon" href="./favicon.png" />
+    <link rel="manifest" href="./manifest.json" />
+    <link
+      rel="alternate"
+      type="application/json"
+      href="./data.json"
+      title="Vanguard site data"
+    />
     <link rel="stylesheet" href="./styles.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "name": "Vanguard",
+            "url": "https://vanguard.continental-hub.com/",
+            "description": "Vanguard is a Discord moderation bot with anti-raid protection, utility commands, voting workflows, reminders, AI workflows, and an optional Control Center."
+          },
+          {
+            "@type": "SoftwareApplication",
+            "name": "Vanguard",
+            "url": "https://vanguard.continental-hub.com/",
+            "applicationCategory": "CommunicationApplication",
+            "applicationSubCategory": "Discord moderation bot",
+            "description": "Discord moderation bot with anti-raid protection, slash-command utilities, structured voting, reminders, AI workflows, and an optional Control Center.",
+            "featureList": [
+              "Moderation commands including lockdown, timeout, warn, and purge",
+              "Anti-raid guard presets and advanced trigger tuning",
+              "Structured voting workflows with live tracking",
+              "Reminders, utility commands, and AI chat relay",
+              "Optional web Control Center for server management"
+            ],
+            "creator": {
+              "@type": "Organization",
+              "name": "Continental",
+              "url": "https://continental-hub.com/"
+            },
+            "sameAs": [
+              "https://github.com/Charlemagne404/Vanguard"
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div class="bg-canvas" aria-hidden="true">
@@ -37,6 +120,7 @@
         <a href="#commands">Commands</a>
         <a href="#guard">Guard</a>
         <a href="#voting">Voting</a>
+        <a href="#faq">FAQ</a>
         <a class="nav-control-link" href="./control/">Control Center</a>
         <a href="#deploy">Deploy</a>
         <a href="https://github.com/Charlemagne404" target="_blank" rel="noreferrer"
@@ -62,12 +146,13 @@
           <h1>VANGUARD</h1>
         </div>
         <div class="hero-copy">
-          <p class="eyebrow">Discord Moderation + Utility Bot</p>
-          <h2>Keep your server sharp, safe, and moving.</h2>
+          <p class="eyebrow">Discord Moderation Bot + Control Center</p>
+          <h2>Anti-raid protection, moderation commands, voting, and server control.</h2>
           <p class="subtitle">
-            Vanguard combines moderation controls, utility commands, and AI chat
-            workflows in one bot. Fast actions, clear guardrails, and no
-            clutter.
+            Vanguard combines Discord moderation controls, utility commands,
+            anti-raid guardrails, structured voting, reminders, and AI chat
+            workflows in one bot. Fast actions, cleaner operations, and less
+            bot sprawl for serious communities.
           </p>
           <div class="hero-actions">
             <a
@@ -112,28 +197,36 @@
       </section>
 
       <section id="features" class="section container reveal">
-        <p class="section-kicker">System Profile</p>
-        <h3>Built for high-control moderation and steady communities.</h3>
+        <p class="section-kicker">Discord Moderation Bot</p>
+        <h3>Built for anti-raid defense, moderation workflows, and server operations.</h3>
+        <p class="section-lead">
+          Vanguard is designed for Discord communities that need one deployment
+          to cover moderation, utility, voting, and configuration. It combines
+          fast incident-response tools with a cleaner long-term setup path
+          through the optional web Control Center.
+        </p>
         <div class="feature-grid">
           <article class="feature-card">
             <h3>Moderation Stack</h3>
             <p>
-              Warnings, timeouts, lockdown mode, case logs, and undo paths for
-              when incidents move quickly.
+              Discord moderation commands including warnings, timeouts,
+              lockdown mode, purge actions, case logs, and undo paths when
+              incidents move quickly.
             </p>
           </article>
           <article class="feature-card">
-            <h3>Community Utility</h3>
+            <h3>Server Utility</h3>
             <p>
-              Reminders, polls, random choices, and info commands without
-              requiring a second utility bot.
+              Reminders, polls, random choices, server info tools, and member
+              utilities without requiring a second Discord utility bot.
             </p>
           </article>
           <article class="feature-card">
-            <h3>Ops Reliability</h3>
+            <h3>Control Center</h3>
             <p>
-              Health checks, policy endpoints, data summaries, and AI relay
-              support keep operations transparent.
+              An optional web dashboard for welcome flow, ops routing, guard
+              presets, and server setup when command-only management is not the
+              best fit.
             </p>
           </article>
         </div>
@@ -364,17 +457,60 @@
         </div>
       </section>
 
+      <section id="faq" class="section container reveal">
+        <p class="section-kicker">FAQ</p>
+        <h3>Common questions about the Vanguard Discord bot.</h3>
+        <div class="faq-grid">
+          <article class="faq-item">
+            <h4>What kind of Discord bot is Vanguard?</h4>
+            <p>
+              Vanguard is a Discord moderation bot built for server safety and
+              operations. It includes moderation commands, anti-raid guard
+              presets, reminders, structured voting, and an optional web
+              Control Center for server management.
+            </p>
+          </article>
+          <article class="faq-item">
+            <h4>Can Vanguard help with anti-raid protection?</h4>
+            <p>
+              Yes. Vanguard includes guard presets plus advanced controls for
+              join floods, mention bursts, duplicate messages, link spam, and
+              automated mitigation steps such as slowmode, message deletion,
+              and optional timeouts.
+            </p>
+          </article>
+          <article class="faq-item">
+            <h4>How do you open the Control Center?</h4>
+            <p>
+              The public <a href="./control/">Control Center page</a> explains
+              the access flow. The actual dashboard is served by your own
+              Vanguard deployment after you enable the embedded web server and
+              configure Continental ID authentication.
+            </p>
+          </article>
+          <article class="faq-item">
+            <h4>Does Vanguard support voting and operator workflows?</h4>
+            <p>
+              Vanguard supports polls, structured vote flows, ballot tracking,
+              reminders, moderation case logging, and configuration surfaces
+              designed for operators who need clearer server administration.
+            </p>
+          </article>
+        </div>
+      </section>
+
       <section id="deploy" class="section container reveal">
         <div class="cta-box">
           <p class="section-kicker">Deployment</p>
-          <h3>Review deployment and access requirements.</h3>
+          <h3>Review deployment, access, and setup requirements.</h3>
           <p>
-            Start with the setup guide so your bot, control center, and
-            Continental ID integration match the current Vanguard flow.
+            Start with the setup guide so your bot, Discord permissions,
+            Control Center, and Continental ID integration match the current
+            Vanguard deployment flow.
           </p>
           <div class="hero-actions">
             <a class="btn btn-primary invite-btn" href="https://github.com/Charlemagne404/Vanguard#readme" target="_blank" rel="noreferrer">Open Setup Guide</a>
-            <a class="btn btn-ghost" href="https://github.com/Charlemagne404/Vanguard/blob/main/TERMS_OF_SERVICE.md" target="_blank" rel="noreferrer">Read Terms</a>
+            <a class="btn btn-ghost" href="./terms-of-service.html">Read Terms</a>
           </div>
         </div>
       </section>
@@ -382,15 +518,15 @@
 
     <footer class="footer container">
       <p>Vanguard by Continental</p>
-      <p>Official Continental Discord moderation and utility bot.      </p>
+      <p>Official Continental Discord moderation and utility bot.</p>
       <div class="footer-links">
         <a href="https://github.com/Charlemagne404" target="_blank" rel="noreferrer"
           >GitHub</a
         >
-        <a href="https://github.com/Charlemagne404/Vanguard/blob/main/TERMS_OF_SERVICE.md" target="_blank" rel="noreferrer"
+        <a href="./terms-of-service.html"
           >Terms</a
         >
-        <a href="https://github.com/Charlemagne404/Vanguard/blob/main/PRIVACY_POLICY.md" target="_blank" rel="noreferrer"
+        <a href="./privacy-policy.html"
           >Privacy</a
         >
         <a href="https://continental-hub.com" target="_blank" rel="noreferrer"

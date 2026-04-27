@@ -1,0 +1,27 @@
+{
+  "name": "Vanguard",
+  "site_url": "https://vanguard.continental-hub.com/",
+  "description": "Discord moderation bot with anti-raid protection, utility commands, structured voting, reminders, AI workflows, and an optional Control Center.",
+  "control_center_url": "https://vanguard.continental-hub.com/control/",
+  "assets": {
+    "favicon_url": "https://vanguard.continental-hub.com/favicon.png",
+    "manifest_url": "https://vanguard.continental-hub.com/manifest.json",
+    "social_image_url": "https://vanguard.continental-hub.com/Images/Bot_Logo.png"
+  },
+  "legal": {
+    "privacy_policy_url": "https://vanguard.continental-hub.com/privacy-policy.html",
+    "terms_of_service_url": "https://vanguard.continental-hub.com/terms-of-service.html",
+    "license_url": "https://github.com/Charlemagne404/Vanguard/blob/main/LICENSE"
+  },
+  "contact": {
+    "email": "Charlemagne@continental-hub.com"
+  },
+  "features": [
+    "Discord moderation commands",
+    "Anti-raid guard presets and advanced tuning",
+    "Structured voting workflows",
+    "Reminders and utility commands",
+    "Optional web control center"
+  ],
+  "updated_at": "2026-04-26"
+}

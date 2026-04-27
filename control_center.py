@@ -557,6 +557,20 @@ def create_control_center_app(
     secure_cookie = _cookie_secure(public_url, "")
     continental_auth_enabled = bool(fetch_continental_profile and continental_login_url)
     site_base_url = _public_site_base(public_url, site_host, site_port)
+    public_site_root = site_base_url.rstrip("/") or site_base_url
+    content_security_policy = (
+        "default-src 'self'; "
+        "base-uri 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'; "
+        "img-src 'self' data: https:; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
+        "connect-src 'self'; "
+        "manifest-src 'self'"
+    )
     sessions: dict[str, dict[str, Any]] = {}
 
     def current_license_state() -> dict[str, Any]:
@@ -685,19 +699,107 @@ def create_control_center_app(
         request["auth"] = auth
         return await handler(request)
 
-    app = web.Application(middlewares=[auth_middleware])
+    def apply_security_headers(response: web.StreamResponse) -> web.StreamResponse:
+        response.headers.setdefault("Content-Security-Policy", content_security_policy)
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
+        )
+        if public_site_root.startswith("https://"):
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        return response
+
+    @web.middleware
+    async def security_headers_middleware(
+        request: web.Request,
+        handler: Callable[[web.Request], Any],
+    ) -> web.StreamResponse:
+        try:
+            response = await handler(request)
+        except web.HTTPException as exc:
+            response = exc
+        return apply_security_headers(response)
+
+    app = web.Application(middlewares=[security_headers_middleware, auth_middleware])
+
+    def landing_file(name: str) -> web.FileResponse:
+        return web.FileResponse(landing_root / name)
 
     async def landing_index(_: web.Request) -> web.StreamResponse:
-        return web.FileResponse(landing_root / "index.html")
+        return landing_file("index.html")
 
     async def landing_styles(_: web.Request) -> web.StreamResponse:
-        return web.FileResponse(landing_root / "styles.css")
+        return landing_file("styles.css")
 
     async def landing_script(_: web.Request) -> web.StreamResponse:
-        return web.FileResponse(landing_root / "script.js")
+        return landing_file("script.js")
 
     async def landing_404(_: web.Request) -> web.StreamResponse:
-        return web.FileResponse(landing_root / "404.html")
+        return landing_file("404.html")
+
+    async def landing_favicon(_: web.Request) -> web.StreamResponse:
+        return landing_file("favicon.png")
+
+    async def landing_manifest(_: web.Request) -> web.StreamResponse:
+        return landing_file("manifest.json")
+
+    async def landing_data(_: web.Request) -> web.StreamResponse:
+        return landing_file("data.json")
+
+    async def landing_privacy(_: web.Request) -> web.StreamResponse:
+        return landing_file("privacy-policy.html")
+
+    async def landing_terms(_: web.Request) -> web.StreamResponse:
+        return landing_file("terms-of-service.html")
+
+    async def landing_robots(_: web.Request) -> web.StreamResponse:
+        body = "\n".join(
+            [
+                "User-agent: *",
+                "Allow: /",
+                "Disallow: /404.html",
+                "Disallow: /control/",
+                "Disallow: /control/api/",
+                "Disallow: /control/static/",
+                "",
+                f"Sitemap: {public_site_root}/sitemap.xml",
+                "",
+            ]
+        )
+        return web.Response(text=body, content_type="text/plain")
+
+    async def landing_sitemap(_: web.Request) -> web.StreamResponse:
+        lastmod = _utc_now().date().isoformat()
+        body = "\n".join(
+            [
+                '<?xml version="1.0" encoding="UTF-8"?>',
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+                "  <url>",
+                f"    <loc>{public_site_root}/</loc>",
+                f"    <lastmod>{lastmod}</lastmod>",
+                "    <changefreq>weekly</changefreq>",
+                "    <priority>1.0</priority>",
+                "  </url>",
+                "  <url>",
+                f"    <loc>{public_site_root}/privacy-policy.html</loc>",
+                f"    <lastmod>{lastmod}</lastmod>",
+                "    <changefreq>monthly</changefreq>",
+                "    <priority>0.5</priority>",
+                "  </url>",
+                "  <url>",
+                f"    <loc>{public_site_root}/terms-of-service.html</loc>",
+                f"    <lastmod>{lastmod}</lastmod>",
+                "    <changefreq>monthly</changefreq>",
+                "    <priority>0.5</priority>",
+                "  </url>",
+                "</urlset>",
+                "",
+            ]
+        )
+        return web.Response(text=body, content_type="application/xml")
 
     async def index(_: web.Request) -> web.StreamResponse:
         return web.FileResponse(static_root / "index.html")
@@ -917,6 +1019,14 @@ def create_control_center_app(
     app.router.add_get("/styles.css", landing_styles)
     app.router.add_get("/script.js", landing_script)
     app.router.add_get("/404.html", landing_404)
+    app.router.add_get("/favicon.ico", landing_favicon)
+    app.router.add_get("/favicon.png", landing_favicon)
+    app.router.add_get("/manifest.json", landing_manifest)
+    app.router.add_get("/data.json", landing_data)
+    app.router.add_get("/privacy-policy.html", landing_privacy)
+    app.router.add_get("/terms-of-service.html", landing_terms)
+    app.router.add_get("/robots.txt", landing_robots)
+    app.router.add_get("/sitemap.xml", landing_sitemap)
     app.router.add_get(CONTROL_CENTER_PATH, index)
     app.router.add_get(CONTROL_CENTER_PATH + "/", index)
     app.router.add_post(f"{CONTROL_CENTER_AUTH_PATH}/logout", auth_logout)
